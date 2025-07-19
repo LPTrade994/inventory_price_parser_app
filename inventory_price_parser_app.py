@@ -288,7 +288,7 @@ merged_df["Prezzo minimo suggerito (€)"] = merged_df.apply(
     closing_fee=closing_fee,
     dst_pct=DST_PCT,
     ship_cost=shipping_cost,
-    vat=vat_pct,
+    vat_pct=vat_pct,
     margin_pct=margin_pct,
 )
 

@@ -131,25 +131,44 @@ def calc_min_price(
     closing_fee: float,
     dst_pct: float,
     ship_cost: float,
-    vat: float,
+    vat_pct: float,
     margin_pct: float,
 ):
+    """Calcola il prezzo minimo (IVA inclusa) necessario a garantire
+    il margine desiderato dopo tutte le fee Amazon.
+
+    Formula derivata:
+        P = (1+v) * (F*(1+d) + S + C*(1+m))  /  (1 - p*(1+d))
+
+    Dove:
+        P  = prezzo di vendita IVA inclusa
+        C  = costo medio acquisto (€)
+        S  = costo spedizione / fulfilment (€)
+        F  = closing fee (€)
+        p  = % referral fee   /100
+        d  = % DST            /100   (Italia = 3 %)
+        v  = % IVA            /100
+        m  = % margine target /100
+
+    Referral e DST sono calcolati sulla base imponibile (prezzo
+    escl. IVA); margine è calcolato sul costo C.
+    """
+
     cost = row["Prezzo medio acquisto (€)"]
     if pd.isna(cost):
         return None
 
-    r = referral_pct / 100.0
-    d = dst_pct / 100.0
-    v = vat / 100.0
-    m = margin_pct / 100.0
+    p = referral_pct / 100
+    d = dst_pct / 100
+    v = vat_pct / 100
+    m = margin_pct / 100
 
-    A = 1 / (1 + v) - r * (1 + d)
-    const = closing_fee * (1 + d) + ship_cost + cost * (1 + m)
+    denom = 1 - p * (1 + d)
+    if denom <= 0:
+        return None  # parametri impossibili (fee troppo alte)
 
-    if A <= 0:
-        return None
-
-    return round(const / A, 2)
+    numerator = (1 + v) * (closing_fee * (1 + d) + ship_cost + cost * (1 + m))
+    return round(numerator / denom, 2)
 
 
 def build_flatfile(df: pd.DataFrame) -> pd.DataFrame:
@@ -256,7 +275,7 @@ with st.sidebar:
 r = referral_fee_pct / 100.0
 d = DST_PCT / 100.0
 v = vat_pct / 100.0
-A_check = 1 / (1 + v) - r * (1 + d)
+A_check = 1 - r * (1 + d)
 if A_check <= 0:
     st.warning("Parametri non validi: commissione + margine troppo alti")
 

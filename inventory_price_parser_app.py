@@ -221,6 +221,11 @@ if inventory_df is None or purchase_df is None:
 # ---------------------------------------------------------
 merged_df = get_merged_inventory(inventory_df, purchase_df, parse_option)
 
+# Verifica che la colonna "Categoria" sia presente e popolata
+if "Categoria" not in merged_df.columns or merged_df["Categoria"].dropna().empty:
+    st.error("⚠️ Il file prezzi non contiene la colonna 'Categoria'.")
+    st.stop()
+
 with st.sidebar:
     st.subheader("⚙️ Parametri commissioni")
 

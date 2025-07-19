@@ -221,10 +221,18 @@ if inventory_df is None or purchase_df is None:
 # ---------------------------------------------------------
 merged_df = get_merged_inventory(inventory_df, purchase_df, parse_option)
 
+
+# Verifica che la colonna Categoria esista e contenga valori
+if "Categoria" not in merged_df.columns or merged_df["Categoria"].dropna().empty:
+    st.error("⚠️ Il file prezzi non contiene la colonna 'Categoria'.")
+    st.stop()
+
+# Determina la categoria dai dati fusi
 with st.sidebar:
     st.subheader("⚙️ Parametri commissioni")
 
     cats = merged_df["Categoria"].dropna().unique().tolist()
+
     selected_cat = st.selectbox("Categoria", cats)
 
     defaults = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"])

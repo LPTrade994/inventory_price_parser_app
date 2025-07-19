@@ -114,11 +114,26 @@ def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, 
     return merged
 
 
-def calc_min_price(row, fee_pct: float, margin_pct: float, fba: float):
+def calc_min_price(row, referral: float, v_close: float, dst: float, fba: float, vat: float, margin: float):
     cost = row["Prezzo medio acquisto (€)"]
     if pd.isna(cost):
         return None
-    return round((cost + fba) / (1 - (fee_pct + margin_pct) / 100), 2)
+
+    # coefficienti
+    r = referral / 100.0
+    d = dst / 100.0
+    v = vat / 100.0
+    m = margin / 100.0
+
+    A = r * (1 + d)  # coeff su prezzo
+    B = v_close * (1 + d) + fba  # costi fissi per unità
+
+    denom = 1 - m - (1 + v) * A
+    if denom <= 0:
+        return None
+
+    price = (1 + v) * (B + cost) / denom
+    return round(price, 2)
 
 
 def build_flatfile(df: pd.DataFrame) -> pd.DataFrame:
@@ -191,29 +206,54 @@ if inventory_df is None or purchase_df is None:
 merged_df = get_merged_inventory(inventory_df, purchase_df, parse_option)
 
 with st.sidebar:
-    st.subheader("⚙️ Parametri di calcolo")
-    amazon_fee_pct = st.number_input("📉 Fee Amazon %", value=15.0, min_value=0.0)
-    margin_pct = st.number_input("💰 Margine desiderato %", value=20.0, min_value=0.0)
-    fba_cost = st.number_input("📦 Costo FBA / spedizione €", value=0.0, min_value=0.0)
+    st.subheader("⚙️ Parametri commissioni")
+    referral_fee_pct = st.number_input(
+        "Commissione segnalazione %", value=15.0, min_value=0.0
+    )
+    var_closing_fee = st.number_input(
+        "Commissione variabile di chiusura €", value=0.81, min_value=0.0, step=0.01
+    )
+    fba_fee = st.number_input(
+        "Costo fulfilment / spedizione €", value=0.0, min_value=0.0, step=0.01
+    )
+    dst_pct = st.number_input("DST %", value=3.0, min_value=0.0, step=0.1)
+    vat_pct = st.number_input("IVA %", value=22.0, min_value=0.0, step=0.1)
+    margin_pct = st.number_input("Margine desiderato %", value=20.0, min_value=0.0, step=0.1)
 
     if "Categoria" in merged_df.columns:
         cats = merged_df["Categoria"].dropna().unique().tolist()
         selected_cats = st.multiselect("🔍 Filtra per categoria", cats, default=cats)
         merged_df = merged_df[merged_df["Categoria"].isin(selected_cats)]
 
+# verifica parametri di costo/margine
+r = referral_fee_pct / 100.0
+d = dst_pct / 100.0
+v = vat_pct / 100.0
+m = margin_pct / 100.0
+denom_check = 1 - m - (1 + v) * r * (1 + d)
+if denom_check <= 0:
+    st.warning("⚠️ La combinazione di fee e margine è troppo alta per calcolare il prezzo minimo.")
+
 merged_df["Prezzo minimo suggerito (€)"] = merged_df.apply(
     calc_min_price,
     axis=1,
-    fee_pct=amazon_fee_pct,
-    margin_pct=margin_pct,
-    fba=fba_cost,
+    referral=referral_fee_pct,
+    v_close=var_closing_fee,
+    dst=dst_pct,
+    fba=fba_fee,
+    vat=vat_pct,
+    margin=margin_pct,
 )
 
 # ---------------------------------------------------------
 # Dashboard dei risultati
 # ---------------------------------------------------------
 st.subheader("Anteprima dataset unificato")
-st.dataframe(merged_df, use_container_width=True, hide_index=True)
+st.dataframe(
+    merged_df.style.highlight_null("orange"),
+    use_container_width=True,
+    hide_index=True,
+)
 
 # KPI
 st.subheader("📈 KPI principali")

@@ -242,28 +242,13 @@ if inventory_df is None or purchase_df is None:
 # ---------------------------------------------------------
 merged_df = get_merged_inventory(inventory_df, purchase_df, parse_option)
 
-# Verifica disponibilità della colonna "Categoria" per proporre le percentuali
-cat_column_available = (
-    "Categoria" in merged_df.columns
-    and not merged_df["Categoria"].dropna().empty
-)
-if not cat_column_available:
-    st.warning(
-        "⚠️ Il file prezzi non contiene una colonna 'Categoria' valida. "
-        "Seleziona manualmente la categoria da usare."
-    )
-
 with st.sidebar:
     st.subheader("⚙️ Parametri commissioni")
 
-    if cat_column_available:
-        cats = merged_df["Categoria"].dropna().unique().tolist()
-    else:
-        cats = [c for c in CATEGORY_MAP.keys() if c != "_default"]
+    cats = [c for c in CATEGORY_MAP.keys() if c != "_default"]
     selected_cat = st.selectbox("Categoria", cats)
-    if not cat_column_available:
-        # Forza la categoria selezionata per tutte le righe
-        merged_df["Categoria"] = selected_cat
+    # Applica la stessa categoria a tutte le righe
+    merged_df["Categoria"] = selected_cat
 
     defaults = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"])
     referral_fee_pct = st.number_input(

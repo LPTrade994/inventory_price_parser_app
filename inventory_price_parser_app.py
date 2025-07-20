@@ -77,7 +77,16 @@ with st.sidebar:
 def load_excel(uploaded_file):
     if uploaded_file is None:
         return None
-    return pd.read_excel(uploaded_file)
+    filename = getattr(uploaded_file, "name", "").lower()
+    if filename.endswith(".xls"):
+        try:
+            return pd.read_excel(uploaded_file, engine="xlrd")
+        except ImportError:
+            st.error(
+                "Formato .xls non supportato: installa il pacchetto 'xlrd' oppure converti il file in .xlsx."
+            )
+            st.stop()
+    return pd.read_excel(uploaded_file, engine="openpyxl")
 
 
 def normalize_sku(series: pd.Series, parse_suffix: bool) -> pd.Series:

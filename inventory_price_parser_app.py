@@ -77,7 +77,16 @@ with st.sidebar:
 def load_excel(uploaded_file):
     if uploaded_file is None:
         return None
-    return pd.read_excel(uploaded_file)
+    filename = getattr(uploaded_file, "name", "").lower()
+    if filename.endswith(".xls"):
+        try:
+            return pd.read_excel(uploaded_file, engine="xlrd")
+        except ImportError:
+            st.error(
+                "Formato .xls non supportato: installa il pacchetto 'xlrd' oppure converti il file in .xlsx."
+            )
+            st.stop()
+    return pd.read_excel(uploaded_file, engine="openpyxl")
 
 
 def normalize_sku(series: pd.Series, parse_suffix: bool) -> pd.Series:
@@ -134,40 +143,42 @@ def calc_min_price(
     vat_pct: float,
     margin_pct: float,
 ):
-    """Calcola il prezzo minimo (IVA inclusa) necessario a garantire
-    il margine desiderato dopo tutte le fee Amazon.
+    """Restituisce il prezzo minimo (IVA inclusa) affinché il margine netto
+    desiderato (profitto/prezzo) sia raggiunto.
 
-    Formula derivata:
-        P = (1+v) * (F*(1+d) + S + C*(1+m))  /  (1 - p*(1+d))
+    Formula ricavata da:
+        P/k - (1+d)*(r*P + C) - S - CoG >= m*P
 
-    Dove:
-        P  = prezzo di vendita IVA inclusa
-        C  = costo medio acquisto (€)
-        S  = costo spedizione / fulfilment (€)
-        F  = closing fee (€)
-        p  = % referral fee   /100
-        d  = % DST            /100   (Italia = 3 %)
-        v  = % IVA            /100
-        m  = % margine target /100
+        dove:
+          P   = Prezzo IVATO da calcolare
+          k   = 1 + v            (v = IVA /100)
+          r   = referral_pct /100
+          d   = dst_pct      /100
+          C   = closing_fee
+          S   = costo spedizione / fulfilment (€)
+          CoG = costo medio acquisto (€)   [colonna 'Prezzo medio acquisto (€)']
+          m   = margin_pct   /100
 
-    Referral e DST sono calcolati sulla base imponibile (prezzo
-    escl. IVA); margine è calcolato sul costo C.
+        Risolto per P:
+          P = k*(CoG + S + (1+d)*C)  /  ( 1 - k*((1+d)*r + m) )
     """
 
     cost = row["Prezzo medio acquisto (€)"]
     if pd.isna(cost):
         return None
 
-    p = referral_pct / 100
-    d = dst_pct / 100
-    v = vat_pct / 100
-    m = margin_pct / 100
+    r = referral_pct / 100.0
+    d = dst_pct      / 100.0
+    v = vat_pct      / 100.0
+    m = margin_pct   / 100.0
+    k = 1 + v
 
-    denom = 1 - p * (1 + d)
+    numerator = k * (cost + ship_cost + (1 + d) * closing_fee)
+    denom     = 1 - k * ((1 + d) * r + m)
+
     if denom <= 0:
-        return None  # parametri impossibili (fee troppo alte)
+        return None  # parametri impossibili (fee+margine troppo alti)
 
-    numerator = (1 + v) * (closing_fee * (1 + d) + ship_cost + cost * (1 + m))
     return round(numerator / denom, 2)
 
 
@@ -272,12 +283,13 @@ with st.sidebar:
     margin_pct = st.number_input("Margine desiderato %", value=20.0, min_value=0.0)
 
 # verifica parametri di costo/margine
-r = referral_fee_pct / 100.0
-d = DST_PCT / 100.0
-v = vat_pct / 100.0
-A_check = 1 - r * (1 + d)
-if A_check <= 0:
-    st.warning("Parametri non validi: commissione + margine troppo alti")
+denom_check = 1 - (1 + vat_pct/100) * (
+    (1 + DST_PCT/100) * (referral_fee_pct/100) + margin_pct/100
+)
+if denom_check <= 0:
+    st.warning(
+        "Parametri non validi: commissioni + margine troppo alti rispetto al prezzo."
+    )
 
 closing_fee = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"])["closing"]
 
@@ -293,7 +305,9 @@ merged_df["Prezzo minimo suggerito (€)"] = merged_df.apply(
 )
 
 if merged_df["Prezzo minimo suggerito (€)"].isna().any():
-    st.warning("Parametri non validi: commissione + margine troppo alti")
+    st.warning(
+        "Parametri non validi: commissioni + margine troppo alti rispetto al prezzo."
+    )
 
 # ---------------------------------------------------------
 # Dashboard dei risultati

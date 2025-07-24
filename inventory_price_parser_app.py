@@ -302,21 +302,41 @@ if merged_df["Prezzo minimo suggerito (€)"].isna().any():
 # Dashboard dei risultati
 # ---------------------------------------------------------
 st.subheader("Anteprima dataset unificato")
-def highlight_nan(v):
-    return "background-color: orange" if pd.isna(v) else ""
 
-styled_df = merged_df.style.applymap(highlight_nan, subset=["Prezzo minimo suggerito (€)"])
-st.dataframe(styled_df, use_container_width=True, hide_index=True)
+edited_df = st.data_editor(
+    merged_df,
+    key="merged_df_editor",
+    use_container_width=True,
+    hide_index=True,
+)
+
+if st.button("🔄 Ricalcola prezzi minimi"):
+    edited_df["Prezzo minimo suggerito (€)"] = edited_df.apply(
+        calc_min_price,
+        axis=1,
+        referral_pct=referral_fee_pct,
+        closing_fee=closing_fee,
+        dst_pct=DST_PCT,
+        ship_cost=shipping_cost,
+        vat_pct=vat_pct,
+        margin_pct=margin_pct,
+    )
 
 # KPI
 st.subheader("📈 KPI principali")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("SKU totali", len(merged_df))
+    st.metric("SKU totali", len(edited_df))
 with col2:
-    st.metric("Prezzo medio (€/art.)", round(merged_df["Prezzo medio acquisto (€)"].mean(skipna=True), 2))
+    st.metric(
+        "Prezzo medio (€/art.)",
+        round(edited_df["Prezzo medio acquisto (€)"].mean(skipna=True), 2),
+    )
 with col3:
-    totale_vendita = round((merged_df["Prezzo"] * merged_df["Quantita'"]).sum(), 2)
+    totale_vendita = round(
+        (edited_df["Prezzo"] * edited_df["Quantita'"]).sum(),
+        2,
+    )
     st.metric(
         "Totale inventario (valore vendita)",
         f"€ {totale_vendita:,.2f}",
@@ -327,7 +347,7 @@ with col3:
 # ---------------------------------------------------------
 output = io.BytesIO()
 with pd.ExcelWriter(output, engine="openpyxl") as writer:
-    excel_df = merged_df.drop(columns=["_SKU_KEY_"], errors="ignore")
+    excel_df = edited_df.drop(columns=["_SKU_KEY_"], errors="ignore")
     excel_df.to_excel(writer, index=False, sheet_name="inventario_match")
 output.seek(0)
 
@@ -340,7 +360,7 @@ st.download_button(
 
 st.download_button(
     "💾 Scarica Flat‑File (min price)",
-    data=make_flatfile_bytes(build_flatfile(merged_df, inv_key)),
+    data=make_flatfile_bytes(build_flatfile(edited_df, inv_key)),
     file_name="AutomatePricing_MinOnly.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )

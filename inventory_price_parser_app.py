@@ -50,7 +50,7 @@ st.markdown(
 with st.sidebar:
     st.header("⚙️ Opzioni")
     parse_option = st.checkbox(
-        "Ignora suffisso dopo '-' nello SKU (es. 4556415-2 → 4556415)",
+        "Ignora suffisso dopo l'ultimo '-' nello SKU (es. 4556415-2-XY → 4556415-2)",
         value=True,
     )
 
@@ -81,14 +81,27 @@ def load_excel(uploaded_file):
 
 
 def normalize_sku(series: pd.Series, parse_suffix: bool) -> pd.Series:
-    """Restituisce SKU come stringa; se parse_suffix=True rimuove tutto dopo '-'."""
+    """Restituisce SKU come stringa.
+
+    Se ``parse_suffix`` è ``True`` rimuove solo il suffisso dopo l'ultimo
+    trattino (``-``), ad esempio ``ABC-1-2`` diventa ``ABC-1``.
+    """
+    series = series.astype(str).str.strip()
     if parse_suffix:
-        return series.astype(str).str.split("-").str[0].str.strip()
-    return series.astype(str).str.strip()
+        return series.str.rsplit("-", n=1).str[0]
+    return series
 
 
-def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, parse_suffix: bool) -> pd.DataFrame:
-    """Esegue il merge mantenendo la colonna Categoria se presente."""
+def get_merged_inventory(
+    inventory_df: pd.DataFrame,
+    purchase_df: pd.DataFrame,
+    parse_suffix: bool,
+) -> tuple[pd.DataFrame, str]:
+    """Esegue il merge mantenendo la colonna Categoria se presente.
+
+    Restituisce anche il nome della colonna usata come SKU originale
+    nell'inventario.
+    """
     inv_key_candidates = [c for c in inventory_df.columns if c.upper() in {"SKU", "CODICE(ASIN)", "CODICE", "ASIN"}]
     price_key_candidates = [c for c in purchase_df.columns if c.upper() in {"CODICE", "SKU", "CODICE(ASIN)"}]
 
@@ -122,7 +135,7 @@ def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, 
         purchase_df[subset_cols], on="_SKU_KEY_", how="left", suffixes=("", "_acquisto")
     )
     merged = merged.rename(columns={price_col: "Prezzo medio acquisto (€)"})
-    return merged
+    return merged, inv_key
 
 
 def calc_min_price(
@@ -173,7 +186,7 @@ def calc_min_price(
     return round(numerator / denom, 2)
 
 
-def build_flatfile(df: pd.DataFrame) -> pd.DataFrame:
+def build_flatfile(df: pd.DataFrame, sku_col: str) -> pd.DataFrame:
     field_names = [
         "sku",
         "minimum-seller-allowed-price",
@@ -199,7 +212,7 @@ def build_flatfile(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     data = {
-        "sku": df["_SKU_KEY_"],
+        "sku": df[sku_col],
         "minimum-seller-allowed-price": df["Prezzo minimo suggerito (€)"],
         "maximum-seller-allowed-price": "",
         "country-code": "IT",
@@ -240,7 +253,7 @@ if inventory_df is None or purchase_df is None:
 # ---------------------------------------------------------
 # Preparazione e merge
 # ---------------------------------------------------------
-merged_df = get_merged_inventory(inventory_df, purchase_df, parse_option)
+merged_df, inv_key = get_merged_inventory(inventory_df, purchase_df, parse_option)
 
 with st.sidebar:
     st.subheader("⚙️ Parametri commissioni")
@@ -314,7 +327,8 @@ with col3:
 # ---------------------------------------------------------
 output = io.BytesIO()
 with pd.ExcelWriter(output, engine="openpyxl") as writer:
-    merged_df.to_excel(writer, index=False, sheet_name="inventario_match")
+    excel_df = merged_df.drop(columns=["_SKU_KEY_"], errors="ignore")
+    excel_df.to_excel(writer, index=False, sheet_name="inventario_match")
 output.seek(0)
 
 st.download_button(
@@ -326,7 +340,7 @@ st.download_button(
 
 st.download_button(
     "💾 Scarica Flat‑File (min price)",
-    data=make_flatfile_bytes(build_flatfile(merged_df)),
+    data=make_flatfile_bytes(build_flatfile(merged_df, inv_key)),
     file_name="AutomatePricing_MinOnly.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )

@@ -308,7 +308,12 @@ edited_df = st.data_editor(
     key="merged_df_editor",
     use_container_width=True,
     hide_index=True,
+    column_config={
+        inv_key: st.column_config.TextColumn(disabled=False)
+    },
 )
+
+edited_df["_SKU_KEY_"] = normalize_sku(edited_df[inv_key], parse_option)
 
 if st.button("🔄 Ricalcola prezzi minimi"):
     edited_df["Prezzo minimo suggerito (€)"] = edited_df.apply(

@@ -115,6 +115,11 @@ def get_merged_inventory(
     inv_key = st.selectbox("Colonna SKU in inventario", inv_key_candidates, index=0)
     price_key = st.selectbox("Colonna SKU in prezzi", price_key_candidates, index=0)
 
+    # Assicura che gli SKU siano gestiti come testo, evitando problemi di
+    # conversione numerica durante l'editing nella griglia dei risultati.
+    inventory_df[inv_key] = inventory_df[inv_key].astype(str)
+    purchase_df[price_key] = purchase_df[price_key].astype(str)
+
     inventory_df["_SKU_KEY_"] = normalize_sku(inventory_df[inv_key], parse_suffix)
     purchase_df["_SKU_KEY_"] = normalize_sku(purchase_df[price_key], parse_suffix)
 

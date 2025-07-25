@@ -244,6 +244,16 @@ def make_flatfile_bytes(df: pd.DataFrame) -> io.BytesIO:
     return output
 
 
+def highlight_below(row):
+    if (
+        pd.notna(row.get("Prezzo minimo suggerito (€)"))
+        and pd.notna(row.get("Prezzo"))
+        and row["Prezzo minimo suggerito (€)"] < row["Prezzo"]
+    ):
+        return ["background-color: lightcoral"] * len(row)
+    return [""] * len(row)
+
+
 # ---------------------------------------------------------
 # Caricamento dati
 # ---------------------------------------------------------
@@ -331,6 +341,9 @@ if st.button("🔄 Ricalcola prezzi minimi"):
         vat_pct=vat_pct,
         margin_pct=margin_pct,
     )
+
+styled_df = edited_df.style.apply(highlight_below, axis=1)
+st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
 # KPI
 st.subheader("📈 KPI principali")

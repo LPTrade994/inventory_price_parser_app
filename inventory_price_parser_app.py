@@ -173,7 +173,7 @@ def calc_min_price(
     """
 
     cost = row["Prezzo medio acquisto (€)"]
-    if pd.isna(cost):
+    if pd.isna(cost) or cost <= 0:
         return None
 
     r = referral_pct / 100.0
@@ -308,7 +308,12 @@ merged_df["Prezzo minimo suggerito (€)"] = merged_df.apply(
     margin_pct=margin_pct,
 )
 
-if merged_df["Prezzo minimo suggerito (€)"].isna().any():
+invalid_mask = (
+    merged_df["Prezzo minimo suggerito (€)"].isna()
+    & merged_df["Prezzo medio acquisto (€)"].notna()
+    & (merged_df["Prezzo medio acquisto (€)"] > 0)
+)
+if invalid_mask.any():
     st.warning(
         "Parametri non validi: commissioni + margine troppo alti rispetto al prezzo."
     )

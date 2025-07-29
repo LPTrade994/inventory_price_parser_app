@@ -81,7 +81,12 @@ def load_excel(uploaded_file):
 
     filename = getattr(uploaded_file, "name", "").lower()
     if filename.endswith(".txt"):
-        return pd.read_csv(uploaded_file, sep="\t", encoding="utf-8")
+        try:
+            return pd.read_csv(uploaded_file, sep="\t", encoding="utf-8")
+        except UnicodeDecodeError:
+            uploaded_file.seek(0)
+            # alcuni file .txt esportati da Excel non sono UTF-8
+            return pd.read_csv(uploaded_file, sep="\t", encoding="latin-1")
 
     return pd.read_excel(uploaded_file)
 

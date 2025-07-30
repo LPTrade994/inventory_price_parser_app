@@ -1,8 +1,8 @@
 # inventory_price_parser_app.py
 # ---------------------------------------------------------
 # Streamlit web‑app per caricare un file inventario (ITALIA.xlsx
-# o inventario.txt) e un file prezzi d'acquisto (PREZZI ACQUISTO.xlsx)
-# e abbinarli
+# o inventario.txt) e un file prezzi d'acquisto (PREZZI ACQUISTO.xlsx
+# o acquisti.txt) e abbinarli
 # tramite SKU. Il prezzo di riferimento usato è "Prezzo medio".
 # Esecuzione locale:  
 #   streamlit run inventory_price_parser_app.py
@@ -63,8 +63,8 @@ with st.sidebar:
     )
 
     price_file = st.file_uploader(
-        "📥 File acquisti (es. PREZZI ACQUISTO.xlsx)",
-        type=["xlsx", "xls"],
+        "📥 File acquisti (es. PREZZI ACQUISTO.xlsx o acquisti.txt)",
+        type=["xlsx", "xls", "txt"],
         key="price_uploader",
     )
 

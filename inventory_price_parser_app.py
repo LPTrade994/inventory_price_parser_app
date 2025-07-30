@@ -371,10 +371,9 @@ with col2:
         round(edited_df["Prezzo medio acquisto (€)"].mean(skipna=True), 2),
     )
 with col3:
-    totale_vendita = round(
-        (edited_df["Prezzo"] * edited_df["Quantita'"]).sum(),
-        2,
-    )
+    price_numeric = pd.to_numeric(edited_df.get("Prezzo"), errors="coerce")
+    qty_numeric = pd.to_numeric(edited_df.get("Quantita'"), errors="coerce")
+    totale_vendita = round((price_numeric * qty_numeric).sum(), 2)
     st.metric(
         "Totale inventario (valore vendita)",
         f"€ {totale_vendita:,.2f}",

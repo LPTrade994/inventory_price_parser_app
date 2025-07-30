@@ -11,6 +11,7 @@
 import io
 
 import pandas as pd
+import numpy as np
 import streamlit as st
 
 CATEGORY_MAP = {
@@ -256,11 +257,9 @@ def make_flatfile_bytes(df: pd.DataFrame) -> io.BytesIO:
 
 
 def highlight_below(row):
-    if (
-        pd.notna(row.get("Prezzo minimo suggerito (€)"))
-        and pd.notna(row.get("Prezzo"))
-        and row["Prezzo minimo suggerito (€)"] < row["Prezzo"]
-    ):
+    min_val = pd.to_numeric(row.get("Prezzo minimo suggerito (€)"), errors="coerce")
+    price_val = pd.to_numeric(row.get("Prezzo"), errors="coerce")
+    if np.isfinite(min_val) and np.isfinite(price_val) and min_val < price_val:
         return ["background-color: lightcoral"] * len(row)
     return [""] * len(row)
 

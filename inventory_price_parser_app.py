@@ -306,6 +306,10 @@ with st.sidebar:
     vat_pct = st.number_input("IVA %", value=22.0, min_value=0.0, step=0.1)
     margin_pct = st.number_input("Margine desiderato %", value=20.0, min_value=0.0)
 
+    show_only_matches = st.checkbox(
+        "Mostra solo articoli presenti nel file acquisti", value=False
+    )
+
 # verifica parametri di costo/margine
 denom_check = 1 - (1 + vat_pct/100) * (
     (1 + DST_PCT/100) * (referral_fee_pct/100) + margin_pct/100
@@ -338,13 +342,18 @@ if invalid_mask.any():
         "Parametri non validi: commissioni + margine troppo alti rispetto al prezzo."
     )
 
+# Applica filtro opzionale per mostrare solo gli articoli presenti nel file acquisti
+display_df = merged_df
+if show_only_matches:
+    display_df = merged_df[merged_df["Prezzo medio acquisto (€)"].notna()]
+
 # ---------------------------------------------------------
 # Dashboard dei risultati
 # ---------------------------------------------------------
 st.subheader("Anteprima dataset unificato")
 
 edited_df = st.data_editor(
-    merged_df,
+    display_df,
     key="merged_df_editor",
     use_container_width=True,
     hide_index=True,

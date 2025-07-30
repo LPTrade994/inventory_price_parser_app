@@ -83,11 +83,21 @@ def load_excel(uploaded_file):
     filename = getattr(uploaded_file, "name", "").lower()
     if filename.endswith(".txt"):
         try:
-            return pd.read_csv(uploaded_file, sep="\t", encoding="utf-8")
+            return pd.read_csv(
+                uploaded_file,
+                sep="\t",
+                encoding="utf-8",
+                decimal=",",
+            )
         except UnicodeDecodeError:
             uploaded_file.seek(0)
             # alcuni file .txt esportati da Excel non sono UTF-8
-            return pd.read_csv(uploaded_file, sep="\t", encoding="latin-1")
+            return pd.read_csv(
+                uploaded_file,
+                sep="\t",
+                encoding="latin-1",
+                decimal=",",
+            )
 
     return pd.read_excel(uploaded_file)
 
@@ -184,7 +194,7 @@ def calc_min_price(
           P = k*(CoG + S + (1+d)*C)  /  ( 1 - k*((1+d)*r + m) )
     """
 
-    cost = row["Prezzo medio acquisto (€)"]
+    cost = pd.to_numeric(row["Prezzo medio acquisto (€)"], errors="coerce")
     if pd.isna(cost) or cost <= 0:
         return None
 

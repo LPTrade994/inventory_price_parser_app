@@ -295,8 +295,7 @@ with st.sidebar:
 
     cats = [c for c in CATEGORY_MAP.keys() if c != "_default"]
     selected_cat = st.selectbox("Categoria", cats)
-    # Applica la stessa categoria a tutte le righe
-    merged_df["Categoria"] = selected_cat
+    # il selettore serve solo per preimpostare le commissioni
 
     defaults = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"])
     referral_fee_pct = st.number_input(

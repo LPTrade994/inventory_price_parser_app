@@ -26,6 +26,27 @@ CATEGORY_MAP = {
     "_default": {"referral": 15.0, "closing": 0.00},
 }
 DST_PCT = 3.0  # Italia
+COUNTRY_CODES = {
+    "AE",
+    "AU",
+    "BE",
+    "BR",
+    "CA",
+    "CN",
+    "DE",
+    "ES",
+    "FR",
+    "GB",
+    "IT",
+    "JP",
+    "MX",
+    "NL",
+    "PL",
+    "SE",
+    "TR",
+    "UK",
+    "US",
+}
 
 # ---------------------------------------------------------
 # Configurazione pagina
@@ -161,6 +182,52 @@ def load_amazon_template(uploaded_file):
     # rinomina alcune colonne chiave per uniformarsi al resto dell'app
     rename_map = {"sku": "SKU", "current-selling-price": "Prezzo"}
     df = df.rename(columns=rename_map)
+
+    # conversioni numeriche e validazioni
+    price_cols = [c for c in df.columns if re.search(r"price|points", c)]
+    for col in price_cols:
+        df[col] = df[col].astype(str).str.replace(",", ".")
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.loc[df[col] < 0, col] = np.nan
+
+    if "sales-rank" in df.columns:
+        df["sales-rank"] = df["sales-rank"].astype(str).str.replace(",", ".")
+        df["sales-rank"] = pd.to_numeric(df["sales-rank"], errors="coerce").astype("Int64")
+        df.loc[df["sales-rank"] < 0, "sales-rank"] = pd.NA
+
+    if "customer-views-share" in df.columns:
+        df["customer-views-share"] = (
+            df["customer-views-share"].astype(str).str.replace(",", ".")
+        )
+        df["customer-views-share"] = pd.to_numeric(
+            df["customer-views-share"], errors="coerce"
+        )
+        df.loc[
+            ~df["customer-views-share"].between(0, 1), "customer-views-share"
+        ] = np.nan
+
+    if "rule-action" in df.columns:
+        df["rule-action"] = df["rule-action"].astype(str).str.strip().str.upper()
+        valid_actions = {"START", "STOP"}
+        invalid = df.loc[
+            ~df["rule-action"].isin(valid_actions) & df["rule-action"].notna(),
+            "rule-action",
+        ].unique()
+        if len(invalid) > 0:
+            raise ValueError(
+                f"Valori 'rule-action' non validi: {', '.join(invalid)}"
+            )
+
+    if "country-code" in df.columns:
+        df["country-code"] = df["country-code"].astype(str).str.strip().str.upper()
+        invalid_cc = df.loc[
+            ~df["country-code"].isin(COUNTRY_CODES) & df["country-code"].notna(),
+            "country-code",
+        ].unique()
+        if len(invalid_cc) > 0:
+            raise ValueError(
+                f"Codici paese non validi: {', '.join(invalid_cc)}"
+            )
 
     return df.reset_index(drop=True)
 

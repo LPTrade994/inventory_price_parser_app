@@ -158,6 +158,10 @@ def load_amazon_template(uploaded_file):
     for col in df.select_dtypes(include="object").columns:
         df[col] = df[col].astype(str).str.strip()
 
+    # rinomina alcune colonne chiave per uniformarsi al resto dell'app
+    rename_map = {"sku": "SKU", "current-selling-price": "Prezzo"}
+    df = df.rename(columns=rename_map)
+
     return df.reset_index(drop=True)
 
 
@@ -183,8 +187,12 @@ def get_merged_inventory(
     Restituisce anche il nome della colonna usata come SKU originale
     nell'inventario.
     """
-    inv_key_candidates = [c for c in inventory_df.columns if c.upper() in {"SKU", "CODICE(ASIN)", "CODICE", "ASIN"}]
-    price_key_candidates = [c for c in purchase_df.columns if c.upper() in {"CODICE", "SKU", "CODICE(ASIN)"}]
+    inv_key_candidates = [
+        c for c in inventory_df.columns if c.upper() in {"SKU", "CODICE(ASIN)", "CODICE", "ASIN"}
+    ]
+    price_key_candidates = [
+        c for c in purchase_df.columns if c.upper() in {"CODICE", "SKU", "CODICE(ASIN)"}
+    ]
 
     if not inv_key_candidates:
         st.error("⚠️ Il file inventario non contiene una colonna riconoscibile come SKU.")
@@ -204,18 +212,38 @@ def get_merged_inventory(
     inventory_df["_SKU_KEY_"] = normalize_sku(inventory_df[inv_key], parse_suffix)
     purchase_df["_SKU_KEY_"] = normalize_sku(purchase_df[price_key], parse_suffix)
 
-    price_cols = [c for c in purchase_df.columns if c.lower().startswith("prezzo medio") or c.lower().startswith("prezzo_medio")]
+    price_cols = [
+        c
+        for c in purchase_df.columns
+        if c.lower().startswith("prezzo medio")
+        or c.lower().startswith("prezzo_medio")
+        or c.lower() == "prezzo"
+    ]
     if not price_cols:
         st.error("⚠️ La colonna 'Prezzo medio' non è stata trovata nel file prezzi.")
         st.stop()
     price_col = price_cols[0]
 
     cat_cols = [c for c in purchase_df.columns if "categoria" in c.lower()]
+    optional_cols = [
+        c
+        for c in purchase_df.columns
+        if c
+        in {
+            "country-code",
+            "currency-code",
+            "minimum-seller-allowed-price",
+            "maximum-seller-allowed-price",
+            "rule-name",
+            "rule-action",
+            "business-rule-name",
+            "business-rule-action",
+        }
+    ]
+    subset_cols = ["_SKU_KEY_", price_col] + optional_cols
     if cat_cols:
         purchase_df = purchase_df.rename(columns={cat_cols[0]: "Categoria"})
-        subset_cols = ["_SKU_KEY_", price_col, "Categoria"]
-    else:
-        subset_cols = ["_SKU_KEY_", price_col]
+        subset_cols.append("Categoria")
 
     merged = inventory_df.merge(
         purchase_df[subset_cols], on="_SKU_KEY_", how="left", suffixes=("", "_acquisto")
@@ -300,13 +328,13 @@ def build_flatfile(df: pd.DataFrame, sku_col: str) -> pd.DataFrame:
     data = {
         "sku": df[sku_col],
         "minimum-seller-allowed-price": df["Prezzo minimo suggerito (€)"],
-        "maximum-seller-allowed-price": "",
-        "country-code": "IT",
-        "currency-code": "EUR",
-        "rule-name": "Rule1",
-        "rule-action": "start",
-        "business-rule-name": "",
-        "business-rule-action": "",
+        "maximum-seller-allowed-price": df.get("maximum-seller-allowed-price", ""),
+        "country-code": df.get("country-code", "IT"),
+        "currency-code": df.get("currency-code", "EUR"),
+        "rule-name": df.get("rule-name", "Rule1"),
+        "rule-action": df.get("rule-action", "start"),
+        "business-rule-name": df.get("business-rule-name", ""),
+        "business-rule-action": df.get("business-rule-action", ""),
     }
 
     df_data = pd.DataFrame(data)
@@ -338,6 +366,13 @@ def highlight_below(row):
 # ---------------------------------------------------------
 inventory_df = load_excel(inv_file)
 purchase_df = load_excel(price_file)
+
+# rinomina colonne chiave se presenti
+rename_map = {"sku": "SKU", "current-selling-price": "Prezzo"}
+if inventory_df is not None:
+    inventory_df = inventory_df.rename(columns=rename_map)
+if purchase_df is not None:
+    purchase_df = purchase_df.rename(columns=rename_map)
 
 # Early‑return UI se mancano file
 if inventory_df is None or purchase_df is None:

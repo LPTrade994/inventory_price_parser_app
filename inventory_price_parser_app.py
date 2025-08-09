@@ -9,7 +9,9 @@
 # ---------------------------------------------------------
 
 import io
+import re
 
+import openpyxl
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -100,6 +102,63 @@ def load_excel(uploaded_file):
             )
 
     return pd.read_excel(uploaded_file)
+
+
+@st.cache_data(show_spinner=False)
+def load_amazon_template(uploaded_file):
+    """Carica un file modello prezzi Amazon e restituisce un DataFrame pulito.
+
+    - Individua il primo foglio disponibile tra "Modello assegnazione prezzo"
+      ed "Esempio".
+    - Usa la seconda riga come intestazioni (convertite in *kebab-case*).
+    - Scarta le prime due righe del foglio.
+    - Rimuove le righe vuote o con SKU mancante e normalizza le stringhe.
+
+    Parameters
+    ----------
+    uploaded_file: file-like
+        File caricato tramite Streamlit ``file_uploader``.
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataset con le 20 colonne canoniche del template Amazon.
+    """
+
+    if uploaded_file is None:
+        return None
+
+    uploaded_file.seek(0)
+    wb = openpyxl.load_workbook(uploaded_file, read_only=True, data_only=True)
+    sheet_name = next((n for n in ["Modello assegnazione prezzo", "Esempio"] if n in wb.sheetnames), None)
+    if sheet_name is None:
+        raise ValueError("Foglio 'Modello assegnazione prezzo' o 'Esempio' non trovato")
+
+    ws = wb[sheet_name]
+    data = list(ws.values)
+    if len(data) < 2:
+        return pd.DataFrame()
+
+    header_raw = data[1][:20]
+
+    def to_kebab(s: str) -> str:
+        s = "" if s is None else str(s)
+        s = re.sub(r"[^0-9A-Za-z]+", "-", s.strip().lower())
+        return re.sub(r"-+", "-", s).strip("-")
+
+    columns = [to_kebab(c) for c in header_raw]
+    rows = [row[:20] for row in data[2:]]
+    df = pd.DataFrame(rows, columns=columns)
+
+    df = df.dropna(how="all")
+    if "sku" in df.columns:
+        df["sku"] = df["sku"].astype(str).str.strip()
+        df = df[df["sku"] != ""]
+
+    for col in df.select_dtypes(include="object").columns:
+        df[col] = df[col].astype(str).str.strip()
+
+    return df.reset_index(drop=True)
 
 
 def normalize_sku(series: pd.Series, parse_suffix: bool) -> pd.Series:

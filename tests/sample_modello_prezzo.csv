@@ -1,0 +1,4 @@
+Header1;Header2;Header3;Header4;Header5;Header6
+SKU;Current Selling Price;Rule action;Country Code;Sales Rank;Customer Views Share
+ABC123;10,50;START;IT;100;0,5
+DEF456;-5;STOP;US;-1;1,2

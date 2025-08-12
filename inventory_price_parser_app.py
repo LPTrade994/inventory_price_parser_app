@@ -91,13 +91,7 @@ with st.sidebar:
         key="price_uploader",
     )
 
-    
-    template_file = st.file_uploader(
-        "📥 Modello Amazon (opzionale)",
-        type=["xlsx", "xls"],
-        key="template_uploader",
-    )
-download_name = st.text_input(
+    download_name = st.text_input(
         "Nome file Excel da scaricare", value="inventario_con_prezzi.xlsx"
     )
 
@@ -405,16 +399,13 @@ def build_flatfile(df: pd.DataFrame, sku_col: str) -> pd.DataFrame:
         "country-code": df.get("country-code", "IT"),
         "currency-code": df.get("currency-code", "EUR"),
         "rule-name": df.get("rule-name", "Rule1"),
-        "rule-action": df.get("rule-action", "START"),
+        "rule-action": df.get("rule-action", "start"),
         "business-rule-name": df.get("business-rule-name", ""),
         "business-rule-action": df.get("business-rule-action", ""),
     }
 
     df_data = pd.DataFrame(data)
-    
-    if 'rule-action' in df_data.columns:
-        df_data['rule-action'] = df_data['rule-action'].astype(str).str.upper()
-df_full = pd.concat(
+    df_full = pd.concat(
         [pd.DataFrame([header_desc], columns=field_names), pd.DataFrame([field_names], columns=field_names), df_data],
         ignore_index=True,
     )
@@ -432,7 +423,7 @@ def make_flatfile_bytes(df: pd.DataFrame) -> io.BytesIO:
 def highlight_below(row):
     min_val = pd.to_numeric(row.get("Prezzo minimo suggerito (€)"), errors="coerce")
     price_val = pd.to_numeric(row.get("Prezzo"), errors="coerce")
-    if np.isfinite(min_val) and np.isfinite(price_val) and min_val > price_val:
+    if np.isfinite(min_val) and np.isfinite(price_val) and min_val < price_val:
         return ["background-color: lightcoral"] * len(row)
     return [""] * len(row)
 
@@ -442,8 +433,6 @@ def highlight_below(row):
 # ---------------------------------------------------------
 inventory_df = load_excel(inv_file)
 purchase_df = load_excel(price_file)
-
-template_df = load_amazon_template(template_file)
 
 # rinomina colonne chiave se presenti
 rename_map = {"sku": "SKU", "current-selling-price": "Prezzo"}
@@ -535,29 +524,6 @@ edited_df = st.data_editor(
 
 edited_df["_SKU_KEY_"] = normalize_sku(edited_df[inv_key], parse_option)
 
-if st.button("🔗 Rematch SKU (ri-abbina prezzi d'acquisto)"):
-    pk_candidates = [c for c in purchase_df.columns if c.upper() in {"CODICE", "SKU", "CODICE(ASIN)"}]
-    if not pk_candidates:
-        st.error("⚠️ Nessuna colonna chiave (CODICE/SKU/CODICE(ASIN)) trovata nel file prezzi.")
-    else:
-        pk = pk_candidates[0]
-        price_cols = [
-            c for c in purchase_df.columns
-            if ("prezzo medio" in c.lower()) or (c.lower().startswith("prezzo_medio")) or (c.lower() == "prezzo")
-        ]
-        if not price_cols:
-            st.error("⚠️ La colonna 'Prezzo medio' non è stata trovata nel file prezzi.")
-        else:
-            price_col = price_cols[0]
-            tmp = purchase_df[[pk, price_col]].copy()
-            tmp["_SKU_KEY_"] = normalize_sku(tmp[pk], parse_option)
-            tmp = tmp[["_SKU_KEY_", price_col]].drop_duplicates(subset=["_SKU_KEY_"])
-            tmp = tmp.rename(columns={price_col: "Prezzo medio acquisto (€)"})
-            if "Prezzo medio acquisto (€)" in edited_df.columns:
-                edited_df.drop(columns=["Prezzo medio acquisto (€)"], inplace=True)
-            edited_df = edited_df.merge(tmp, on="_SKU_KEY_", how="left")
-
-
 if st.button("🔄 Ricalcola prezzi minimi"):
     edited_df["Prezzo minimo suggerito (€)"] = edited_df.apply(
         calc_min_price,
@@ -601,20 +567,6 @@ with pd.ExcelWriter(output, engine="openpyxl") as writer:
     excel_df.to_excel(writer, index=False, sheet_name="inventario_match")
 output.seek(0)
 
-
-# Propaga metadati dal Modello Amazon se presente (country-code, currency-code, rule-*, business-rule-*)
-if template_df is not None and isinstance(template_df, pd.DataFrame) and 'sku' in template_df.columns:
-    meta_cols = [
-        'country-code', 'currency-code', 'rule-name', 'rule-action',
-        'business-rule-name', 'business-rule-action'
-    ]
-    use_cols = ['sku'] + [c for c in meta_cols if c in template_df.columns]
-    meta_df_small = template_df[use_cols].drop_duplicates(subset=['sku'])
-    # Merge sui valori SKU dell'inventario (inv_key)
-    try:
-        edited_df = edited_df.merge(meta_df_small, left_on=inv_key, right_on='sku', how='left')
-    except Exception as e:
-        st.warning(f"Impossibile unire i metadati del Modello Amazon: {e}")
 st.download_button(
     label="💾 Scarica Excel unificato",
     data=output,

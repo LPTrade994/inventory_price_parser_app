@@ -2,10 +2,9 @@
 # ---------------------------------------------------------
 # Streamlit web-app per caricare un file inventario (ITALIA.xlsx
 # o inventario.txt) e un file prezzi d'acquisto (PREZZI ACQUISTO.xlsx
-# o acquisti.txt) e abbinarli tramite SKU. Il prezzo di riferimento usato è
-# "Prezzo medio". Integra anche l'export Automate Pricing (flat-file Amazon)
-# per compilare rule-name e minimum-seller-allowed-price.
-# Esecuzione locale:
+# o acquisti.txt) e abbinarli
+# tramite SKU. Il prezzo di riferimento usato è "Prezzo medio".
+# Esecuzione locale:  
 #   streamlit run inventory_price_parser_app.py
 # ---------------------------------------------------------
 
@@ -26,12 +25,31 @@ CATEGORY_MAP = {
     "Software": {"referral": 15.0, "closing": 0.81},
     "_default": {"referral": 15.0, "closing": 0.00},
 }
-DST_PCT = 3.0  # Italia (DST default)
+DST_PCT = 3.0  # Italia
 
 COUNTRY_CODES = {
-    "AE","AU","BE","BR","CA","CN","DE","ES","FR","GB","IT","JP",
-    "MX","NL","PL","SE","TR","UK","US","IE"
+    "AE",
+    "AU",
+    "BE",
+    "BR",
+    "CA",
+    "CN",
+    "DE",
+    "ES",
+    "FR",
+    "GB",
+    "IT",
+    "JP",
+    "MX",
+    "NL",
+    "PL",
+    "SE",
+    "TR",
+    "UK",
+    "US",
+    "IE",
 }
+
 
 # ---------------------------------------------------------
 # Sidebar – caricamento file e opzioni
@@ -76,11 +94,11 @@ def load_excel(uploaded_file):
     if uploaded_file is None:
         return None
 
-    name = (getattr(uploaded_file, "name", "") or "").lower()
+    name = uploaded_file.name.lower()
     if name.endswith(".txt"):
         uploaded_file.seek(0)
         content = uploaded_file.read().decode("latin-1", errors="ignore")
-        # prova TSV poi CSV
+        # prova TSV e CSV
         try:
             df = pd.read_csv(io.StringIO(content), sep="\t", decimal=",")
         except Exception:
@@ -89,7 +107,6 @@ def load_excel(uploaded_file):
 
     # Excel
     try:
-        uploaded_file.seek(0)
         df = pd.read_excel(uploaded_file, engine="openpyxl")
     except Exception:
         uploaded_file.seek(0)
@@ -106,111 +123,158 @@ def _to_kebab(s: str) -> str:
 
 
 def load_amazon_template(uploaded_file):
-    """Parser robusto per template/export Automate Pricing (anche CSV/TSV).
+    """Carica un file *template* Automate Pricing (doppio header fisso)."""
+    uploaded_file.seek(0)
+    wb = openpyxl.load_workbook(uploaded_file, read_only=True, data_only=True)
+    sheet_name = next((n for n in [
+        "Modello assegnazione prezzo",
+        "Modello di assegnazione prezzo",
+        "Modello di assegnazione del prezzo",
+        "Esempio",
+    ] if n in wb.sheetnames), wb.sheetnames[0])
 
-    - Cerca il foglio giusto ("Modello assegnazione prezzo" / "Esempio") se Excel,
-      altrimenti legge CSV/TSV senza header.
-    - Individua dinamicamente la riga di header con il campo 'sku' (case-insensitive).
-    - Converte l'header in *kebab-case* e rinomina 'sku' -> 'SKU'; 'current-selling-price' -> 'Prezzo'.
-    - Esegue coercizioni numeriche sui campi prezzo/rank; valida rule-action/country-code.
-    """
-    name = (getattr(uploaded_file, "name", "") or "").lower()
+    ws = wb[sheet_name]
+    data = list(ws.values)
+    if len(data) < 2:
+        return pd.DataFrame()
 
-    # --- Caricamento grezzo in DataFrame senza header ---
-    df_raw = None
-    if name.endswith((".csv", ".tsv")):
-        uploaded_file.seek(0)
-        sample = uploaded_file.read(4096).decode("utf-8", errors="ignore")
-        uploaded_file.seek(0)
-        sep = "\t" if ("\t" in sample and "," not in sample) else ","
-        df_raw = pd.read_csv(uploaded_file, header=None, sep=sep, dtype=str, keep_default_na=False)
-    else:
-        # Excel
-        uploaded_file.seek(0)
-        wb = openpyxl.load_workbook(uploaded_file, read_only=True, data_only=True)
-        # Prova nomi noti, altrimenti prima sheet utile
-        candidate_sheets = [
-            s for s in ["Modello assegnazione prezzo", "Esempio"] if s in wb.sheetnames
-        ] or wb.sheetnames
-        ws = wb[candidate_sheets[0]]
-        data = list(ws.values)
-        if not data:
-            return pd.DataFrame()
-        df_raw = pd.DataFrame(data)
+    # riga 2 (index 1) = nomi macchina nella maggior parte dei template
+    header_raw = data[1]
+    columns = [_to_kebab(h) for h in header_raw]
+    rows = [list(row) for row in data[2:]]
+    df = pd.DataFrame(rows, columns=columns)
 
-    # --- Ricerca della riga header che contiene 'sku' ---
-    header_idx = None
-    max_scan = min(25, len(df_raw))
-    for i in range(max_scan):
-        row = (
-            df_raw.iloc[i]
-            .astype(str)
-            .str.strip()
-            .str.lower()
-            .replace({"nan": ""})
-            .tolist()
-        )
-        if any(cell == "sku" for cell in row):
-            header_idx = i
-            break
-    if header_idx is None:
-        raise ValueError("Header con 'sku' non trovato nel flat-file export.")
-
-    # --- Costruzione DataFrame con intestazioni pulite ---
-    headers = [_to_kebab(x) for x in df_raw.iloc[header_idx].tolist()]
-    df = df_raw.iloc[header_idx + 1 :].reset_index(drop=True).copy()
-    # taglia/estende colonne per allinearle all'header
-    df = df.iloc[:, : len(headers)]
-    df.columns = headers
-
-    # drop righe completamente vuote
     df = df.dropna(how="all")
+    if "sku" in df.columns:
+        df["sku"] = df["sku"].astype(str).str.strip()
+        df = df[df["sku"] != ""]
 
     # normalizza stringhe
     for col in df.select_dtypes(include="object").columns:
         df[col] = df[col].astype(str).str.strip()
 
-    # rinomina chiavi principali
-    rename_map = {"sku": "SKU", "current-selling-price": "Prezzo"}
+    # alias e rinomina
+    rename_map = {"sku": "SKU", "seller-sku": "SKU", "current-selling-price": "Prezzo"}
     df = df.rename(columns=rename_map)
 
     # coercizioni numeriche
-    price_like = [c for c in df.columns if re.search(r"price|points|amount", c)]
-    for c in price_like:
-        df[c] = (
-            df[c]
-            .astype(str)
-            .str.replace(".", "", regex=False)  # rimuovi separatore migliaia se presente
-            .str.replace(",", ".", regex=False)
+    price_cols = [c for c in df.columns if re.search(r"price|points", c)]
+    for col in price_cols:
+        df[col] = pd.to_numeric(
+            pd.Series(df[col]).astype(str).str.replace(",", "."), errors="coerce"
         )
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-        df.loc[df[c] < 0, c] = np.nan
+        df.loc[df[col] < 0, col] = np.nan
 
     if "sales-rank" in df.columns:
-        df["sales-rank"] = (
-            df["sales-rank"].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-        )
-        df["sales-rank"] = pd.to_numeric(df["sales-rank"], errors="coerce").astype("Int64")
+        df["sales-rank"] = pd.to_numeric(
+            pd.Series(df["sales-rank"]).astype(str).str.replace(",", "."), errors="coerce"
+        ).astype("Int64")
 
     if "rule-action" in df.columns:
         df["rule-action"] = df["rule-action"].astype(str).str.strip().str.upper()
         valid_actions = {"START", "STOP"}
-        invalid = df.loc[
-            ~df["rule-action"].isin(valid_actions) & df["rule-action"].notna(), "rule-action"
-        ].unique()
-        if len(invalid) > 0:
-            raise ValueError(f"Valori 'rule-action' non validi: {', '.join(invalid)}")
+        bad = df.loc[~df["rule-action"].isin(valid_actions) & df["rule-action"].notna(), "rule-action"].unique()
+        if len(bad) > 0:
+            raise ValueError(f"Valori 'rule-action' non validi: {', '.join(bad)}")
 
     if "country-code" in df.columns:
         df["country-code"] = df["country-code"].astype(str).str.strip().str.upper()
-        invalid_cc = df.loc[
-            ~df["country-code"].isin(COUNTRY_CODES) & df["country-code"].notna(), "country-code"
-        ].unique()
-        if len(invalid_cc) > 0:
-            # Non blocco: avviso in UI; qui mi limito a normalizzare
-            pass
+        bad_cc = df.loc[~df["country-code"].isin(COUNTRY_CODES) & df["country-code"].notna(), "country-code"].unique()
+        if len(bad_cc) > 0:
+            raise ValueError(f"Codici paese non validi: {', '.join(bad_cc)}")
 
-    # pulizia SKU
+    return df.reset_index(drop=True)
+
+
+def load_amazon_export(uploaded_file):
+    """Parser *robusto* del flat-file **export** (header variabile, CSV/XLSX/TSV).
+
+    - Scansiona le prime ~30 righe per trovare la riga che contiene 'sku' (o 'seller-sku').
+    - Usa quella riga come intestazione effettiva (in kebab-case) e legge i record successivi.
+    - Supporta Excel (qualsiasi nome foglio) e CSV/TSV (senza header).
+    """
+    name = uploaded_file.name.lower()
+
+    def _build_df_from_matrix(matrix):
+        # trova riga header
+        header_idx = None
+        header_row = None
+        for i in range(min(30, len(matrix))):
+            row_vals = ["" if v is None else str(v) for v in matrix[i]]
+            keb = [_to_kebab(v) for v in row_vals]
+            if "sku" in keb or "seller-sku" in keb:
+                header_idx = i
+                header_row = keb
+                break
+        if header_idx is None:
+            # fallback: prova seconda riga come nei template
+            header_idx = 1 if len(matrix) > 1 else 0
+            header_row = [_to_kebab(v) for v in (matrix[header_idx] if matrix else [])]
+
+        data_rows = [list(r) for r in matrix[header_idx + 1 :]]
+        df = pd.DataFrame(data_rows, columns=header_row)
+        # pulizie
+        for col in df.select_dtypes(include="object").columns:
+            df[col] = df[col].astype(str).str.strip()
+        # alias sku
+        ren = {"sku": "SKU", "seller-sku": "SKU", "current-selling-price": "Prezzo"}
+        df = df.rename(columns=ren)
+        return df
+
+    if name.endswith((".xlsx", ".xls")):
+        uploaded_file.seek(0)
+        wb = openpyxl.load_workbook(uploaded_file, read_only=True, data_only=True)
+        # scegli foglio preferito se presente, altrimenti il primo
+        sheet_name = next((n for n in [
+            "Modello assegnazione prezzo",
+            "Modello di assegnazione prezzo",
+            "Modello di assegnazione del prezzo",
+            "Esempio",
+        ] if n in wb.sheetnames), wb.sheetnames[0])
+        ws = wb[sheet_name]
+        matrix = list(ws.values)
+        df = _build_df_from_matrix(matrix)
+    else:
+        # CSV/TSV senza header deterministico
+        uploaded_file.seek(0)
+        content = uploaded_file.read().decode("utf-8", errors="ignore")
+        # tenta separatori comuni
+        frames = []
+        for sep in [",", "\t", ";", "|"]:
+            try:
+                tmp = pd.read_csv(io.StringIO(content), sep=sep, header=None, dtype=str)
+                frames.append(tmp)
+            except Exception:
+                pass
+        if not frames:
+            raise ValueError("Impossibile leggere il flat-file export (CSV/TSV)")
+        # scegli quello con più colonne (euristica)
+        df_raw = max(frames, key=lambda d: d.shape[1])
+        matrix = df_raw.fillna("").values.tolist()
+        df = _build_df_from_matrix(matrix)
+
+    # coercizioni numeriche standard
+    num_cols = [
+        "minimum-seller-allowed-price",
+        "maximum-seller-allowed-price",
+        "current-selling-price",
+        "buybox-landed-price",
+        "lowest-landed-price",
+        "sales-rank",
+    ]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(pd.Series(df[c]).astype(str).str.replace(",", "."), errors="coerce")
+
+    # normalizza campi chiave
+    if "rule-action" in df.columns:
+        df["rule-action"] = df["rule-action"].astype(str).str.upper().replace({"": "START", "nan": "START"})
+    if "country-code" in df.columns:
+        df["country-code"] = df["country-code"].astype(str).str.upper()
+    if "currency-code" in df.columns:
+        df["currency-code"] = df["currency-code"].astype(str).str.upper()
+
+    # filtra righe vuote sku
     if "SKU" in df.columns:
         df = df[df["SKU"].astype(str).str.strip() != ""]
 
@@ -218,18 +282,37 @@ def load_amazon_template(uploaded_file):
 
 
 def normalize_sku(series: pd.Series, parse_suffix: bool) -> pd.Series:
+    """Restituisce SKU come stringa.
+
+    Se ``parse_suffix`` è ``True`` rimuove solo il suffisso dopo l'ultimo
+    trattino (``-``), ad esempio ``ABC-1-2`` diventa ``ABC-1``.
+    """
     series = series.astype(str).str.strip()
     if parse_suffix:
         return series.str.rsplit("-", n=1).str[0]
     return series
 
 
-def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, parse_suffix: bool):
-    inv_key_candidates = [c for c in inventory_df.columns if c.upper() in {"SKU", "CODICE(ASIN)", "CODICE", "ASIN"}]
-    price_key_candidates = [c for c in purchase_df.columns if c.upper() in {"CODICE", "SKU", "CODICE(ASIN)"}]
+def get_merged_inventory(
+    inventory_df: pd.DataFrame,
+    purchase_df: pd.DataFrame,
+    parse_suffix: bool,
+) -> tuple[pd.DataFrame, str]:
+    """Esegue il merge mantenendo la colonna Categoria se presente.
+
+    Restituisce anche il nome della colonna usata come SKU originale
+    nell'inventario.
+    """
+    inv_key_candidates = [
+        c for c in inventory_df.columns if c.upper() in {"SKU", "CODICE(ASIN)", "CODICE", "ASIN"}
+    ]
+    price_key_candidates = [
+        c for c in purchase_df.columns if c.upper() in {"CODICE", "SKU", "CODICE(ASIN)"}
+    ]
     if not inv_key_candidates or not price_key_candidates:
         st.error(
-            "Assicurati che entrambi i file contengano almeno una colonna chiave tra: SKU, CODICE(ASIN), CODICE, ASIN."
+            "Assicurati che entrambi i file contengano almeno una colonna chiave tra: "
+            "SKU, CODICE(ASIN), CODICE, ASIN."
         )
         st.stop()
 
@@ -243,10 +326,13 @@ def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, 
     candidate_price_cols = [
         c
         for c in purchase_df.columns
-        if ("prezzo" in c.lower() and "medio" in c.lower()) or c.lower().strip() in {"prezzo", "prezzo medio", "prezzo medio (€)"}
+        if "prezzo" in c.lower() and "medio" in c.lower()
+        or c.lower().strip() in {"prezzo", "prezzo medio", "prezzo medio (€)"}
     ]
     if not candidate_price_cols:
-        st.error("Colonna del prezzo d'acquisto non trovata (es. 'Prezzo medio', 'Prezzo').")
+        st.error(
+            "Colonna del prezzo d'acquisto non trovata (es. 'Prezzo medio', 'Prezzo')."
+        )
         st.stop()
     price_col = candidate_price_cols[0]
 
@@ -321,11 +407,12 @@ def calc_min_price(
     closing_fee = float(closing_fee or 0.0)
 
     k = 1 + v
+
     numerator = k * (cost + ship_cost + (1 + d) * closing_fee)
-    denom = 1 - k * ((1 + d) * r + m)
+    denom     = 1 - k * ((1 + d) * r + m)
 
     if denom <= 0:
-        return None
+        return None  # parametri impossibili (fee+margine troppo alti)
 
     return round(numerator / denom, 2)
 
@@ -390,6 +477,7 @@ def highlight_below(row):
         return ["background-color: lightcoral"] * len(row)
     return [""] * len(row)
 
+
 # ---------------------------------------------------------
 # Caricamento dati
 # ---------------------------------------------------------
@@ -397,16 +485,173 @@ inventory_df = load_excel(inv_file)
 purchase_df = load_excel(price_file)
 
 # rinomina colonne chiave se presenti
-rename_map = {"sku": "SKU", "current-selling-price": "Prezzo"}
+rename_map = {"sku": "SKU", "seller-sku": "SKU", "current-selling-price": "Prezzo"}
 if inventory_df is not None:
     inventory_df = inventory_df.rename(columns=rename_map)
 if purchase_df is not None:
     purchase_df = purchase_df.rename(columns=rename_map)
 
-# Early-return UI se mancano file
-if inventory_df is None or purchase_df is None:
-    st.info("👈 Carica entrambi i file nella barra laterale per continuare.")
+# Early-return rivisto:
+# - Se NON c'è l'export Amazon: servono inventario + acquisti.
+# - Se c'è l'export Amazon: puoi lavorare anche solo con **inventario** (costi dall'inventario)
+#   oppure solo con **acquisti** (costi dal file acquisti). Qui attiviamo i rami dedicati.
+if export_file is None and (inventory_df is None or purchase_df is None):
+    st.info("👈 Carica inventario + acquisti, oppure carica flat-file Amazon + inventario (o + acquisti).")
     st.stop()
+
+# -------------------------------------------------------------------
+# SOLO EXPORT + INVENTARIO: flat-file Amazon + file inventario (senza acquisti)
+# -------------------------------------------------------------------
+if export_file is not None and inventory_df is not None and purchase_df is None:
+    st.subheader("Non Automated SKUs – da export Amazon (solo export + inventario)")
+
+    # Leggo l'export con header dinamico
+    try:
+        export_df = load_amazon_export(export_file)
+    except Exception as e:
+        st.error(f"Errore nel parsing del flat-file export: {e}")
+        st.stop()
+
+    if "SKU" not in export_df.columns:
+        st.error("Il flat-file export non contiene 'SKU'.")
+        st.stop()
+
+    export_df["_SKU_KEY_"] = normalize_sku(export_df["SKU"], parse_option)
+
+    # Individuo chiave SKU nell'inventario
+    inv_key_candidates = [c for c in inventory_df.columns if c.upper() in {"SKU","CODICE(ASIN)","CODICE","ASIN"}]
+    if not inv_key_candidates:
+        st.error("Nel file inventario manca la colonna SKU/CODICE/CODICE(ASIN)/ASIN.")
+        st.stop()
+    inv_key_exp = st.selectbox("Colonna SKU nell'inventario", inv_key_candidates, index=0, key="expinv_invkey")
+    inventory_df["_SKU_KEY_"] = normalize_sku(inventory_df[inv_key_exp], parse_option)
+
+    # Scelta della colonna COSTO nell'inventario
+    priority = [
+        "Prezzo medio acquisto (€)",
+        "Prezzo medio acquisto",
+        "Prezzo acquisto",
+        "Prezzo d'acquisto",
+        "Costo acquisto",
+        "Costo",
+        "Costo unitario",
+        "Costo medio",
+        "Prezzo medio",
+    ]
+    # Candidati per nome e per contenuto (acquisto/costo)
+    name_hits = [c for c in inventory_df.columns if any(p.lower() in c.lower() for p in ["acquisto","costo","cost","purchase"]) ]
+    candidates = [c for c in priority if c in inventory_df.columns]
+    for c in name_hits:
+        if c not in candidates:
+            candidates.append(c)
+    if not candidates:
+        # ultima spiaggia: tutte le colonne numeriche
+        num_cols = [c for c in inventory_df.columns if pd.api.types.is_numeric_dtype(inventory_df[c])]
+        if not num_cols:
+            st.error("Non trovo una colonna costo nell'inventario. Aggiungi una colonna costo o carica anche il file acquisti.")
+            st.stop()
+        candidates = num_cols
+
+    cost_col = st.selectbox("Colonna costo d'acquisto nell'inventario", candidates, index=0, key="expinv_costcol")
+
+    # Categoria opzionale
+    cat_col = None
+    for c in inventory_df.columns:
+        if c.lower().strip() == "categoria":
+            cat_col = c
+            break
+
+    inv_subset_cols = ["_SKU_KEY_", cost_col] + ([cat_col] if cat_col else [])
+    inv_subset = inventory_df[inv_subset_cols].copy()
+    inv_subset = inv_subset.rename(columns={cost_col: "Prezzo medio acquisto (€)", cat_col: "Categoria"} if cat_col else {cost_col: "Prezzo medio acquisto (€)"})
+
+    # Merge export ⟷ inventario (per avere il costo)
+    merged_export = export_df.merge(
+        inv_subset,
+        on="_SKU_KEY_", how="left", suffixes=("", "_inv")
+    )
+
+    # Parametri (indipendenti dal file acquisti)
+    st.markdown("### Parametri costi e margini (solo export + inventario)")
+    cats = list(CATEGORY_MAP.keys())
+    selected_cat_exp = st.selectbox("Categoria predefinita", cats, index=0, key="expinv_cat")
+    defaults_exp = CATEGORY_MAP.get(selected_cat_exp, CATEGORY_MAP["_default"])
+    referral_fee_pct_exp = st.number_input("% Commissione Amazon", value=defaults_exp["referral"], min_value=0.0, key="expinv_ref")
+    shipping_cost_exp     = st.number_input("Costo spedizione €", value=0.0, min_value=0.0, key="expinv_ship")
+    vat_pct_exp           = st.number_input("IVA %", value=22.0, min_value=0.0, step=0.1, key="expinv_vat")
+    margin_pct_exp        = st.number_input("Margine desiderato %", value=20.0, min_value=0.0, key="expinv_margin")
+    closing_fee_exp       = defaults_exp.get("closing", 0.0)
+
+    # Calcolo minimo
+    merged_export["Prezzo medio acquisto (€)"] = pd.to_numeric(merged_export["Prezzo medio acquisto (€)"], errors="coerce")
+    merged_export["Prezzo minimo suggerito (€)"] = merged_export.apply(
+        calc_min_price,
+        axis=1,
+        referral_pct=referral_fee_pct_exp,
+        closing_fee=closing_fee_exp,
+        dst_pct=DST_PCT,
+        ship_cost=shipping_cost_exp,
+        vat_pct=vat_pct_exp,
+        margin_pct=margin_pct_exp,
+    )
+
+    # Opzioni flat-file
+    only_missing_min_exp = st.checkbox("Mostra solo righe senza 'minimum-seller-allowed-price' nel file", value=True, key="expinv_missmin")
+    overwrite_min_exp    = st.checkbox("Sovrascrivi 'minimum-seller-allowed-price' se già presente", value=False, key="expinv_overwrite")
+
+    default_rule_base_exp = st.text_input("Rule name di default", value="AUTO", key="expinv_rulename")
+    today_str_exp = pd.Timestamp.today().strftime("%Y%m%d")
+
+    if "rule-name" not in merged_export.columns:
+        merged_export["rule-name"] = ""
+    if "country-code" not in merged_export.columns:
+        merged_export["country-code"] = "IT"
+    if "currency-code" not in merged_export.columns:
+        merged_export["currency-code"] = "EUR"
+
+    merged_export["rule-action"] = merged_export.get("rule-action", "START")
+    merged_export["rule-action"] = merged_export["rule-action"].astype(str).str.upper().replace({"": "START"})
+
+    def _mk_rule_name_exp(row):
+        rn = str(row.get("rule-name") or "").strip()
+        if rn:
+            return rn
+        cc = str(row.get("country-code") or "IT").upper()
+        return f"{default_rule_base_exp}-{cc}-{today_str_exp}"
+
+    merged_export["rule-name"] = merged_export.apply(_mk_rule_name_exp, axis=1)
+
+    # Filtri e riempimento minimo
+    if "minimum-seller-allowed-price" in merged_export.columns and only_missing_min_exp:
+        view_exp = merged_export[merged_export["minimum-seller-allowed-price"].isna()].copy()
+    else:
+        view_exp = merged_export.copy()
+
+    if overwrite_min_exp or "minimum-seller-allowed-price" not in view_exp.columns:
+        view_exp["minimum-seller-allowed-price"] = view_exp["Prezzo minimo suggerito (€)"]
+    else:
+        view_exp["minimum-seller-allowed-price"] = view_exp["minimum-seller-allowed-price"].where(
+            view_exp["minimum-seller-allowed-price"].notna(), view_exp["Prezzo minimo suggerito (€)"]
+        )
+
+    ff_out_exp = view_exp.dropna(subset=["SKU", "Prezzo medio acquisto (€)", "minimum-seller-allowed-price"])  # richiedo costo valido
+
+    st.dataframe(
+        ff_out_exp[[
+            "SKU","country-code","currency-code","rule-name","rule-action",
+            "minimum-seller-allowed-price","Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"
+        ]].head(100),
+        use_container_width=True, hide_index=True
+    )
+
+    st.download_button(
+        "💾 Scarica Flat-File (compilato da export)",
+        data=make_flatfile_bytes(build_flatfile(ff_out_exp, "SKU")),
+        file_name="AutomatePricing_FromExport.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    st.stop()  # Evita di proseguire nel flusso completo (che richiede anche il file acquisti)
 
 # ---------------------------------------------------------
 # Preparazione e merge
@@ -418,21 +663,30 @@ st.subheader("Parametri costi e margini")
 
 cats = list(CATEGORY_MAP.keys())
 selected_cat = st.selectbox("Categoria", cats)
+# il selettore serve solo per preimpostare le commissioni
 
 defaults = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"])
-referral_fee_pct = st.number_input("% Commissione Amazon", value=defaults["referral"], min_value=0.0)
+referral_fee_pct = st.number_input(
+    "% Commissione Amazon", value=defaults["referral"], min_value=0.0
+)
 shipping_cost = st.number_input("Costo spedizione €", value=0.0, min_value=0.0)
 vat_pct = st.number_input("IVA %", value=22.0, min_value=0.0, step=0.1)
 margin_pct = st.number_input("Margine desiderato %", value=20.0, min_value=0.0)
 
-show_only_matches = st.checkbox("Mostra solo articoli presenti nel file acquisti", value=False)
+show_only_matches = st.checkbox(
+    "Mostra solo articoli presenti nel file acquisti", value=False
+)
 
 # verifica parametri di costo/margine
-denom_check = 1 - (1 + vat_pct / 100) * (((1 + DST_PCT / 100) * (referral_fee_pct / 100)) + (margin_pct / 100))
+denom_check = 1 - (1 + vat_pct/100) * (
+    (1 + DST_PCT/100) * (referral_fee_pct/100) + margin_pct/100
+)
 if denom_check <= 0:
-    st.warning("Parametri non validi: commissioni + margine troppo alti rispetto al prezzo.")
+    st.warning(
+        "Parametri non validi: commissioni + margine troppo alti rispetto al prezzo."
+    )
 
-closing_fee = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"]) ["closing"]
+closing_fee = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"])["closing"]
 
 merged_df["Prezzo minimo suggerito (€)"] = merged_df.apply(
     calc_min_price,
@@ -451,7 +705,9 @@ invalid_mask = (
     & (merged_df["Prezzo medio acquisto (€)"] > 0)
 )
 if invalid_mask.any():
-    st.warning("Parametri non validi: commissioni + margine troppo alti rispetto al prezzo.")
+    st.warning(
+        "Parametri non validi: commissioni + margine troppo alti rispetto al prezzo."
+    )
 
 # Applica filtro opzionale per mostrare solo gli articoli presenti nel file acquisti
 display_df = merged_df
@@ -465,7 +721,7 @@ if export_file is not None:
     st.subheader("Non Automated SKUs – da export Amazon")
 
     try:
-        export_df = load_amazon_template(export_file)
+        export_df = load_amazon_export(export_file)
         if "SKU" not in export_df.columns:
             st.warning("Il flat-file export non contiene la colonna 'SKU'.")
             export_df = None
@@ -479,7 +735,10 @@ if export_file is not None:
         # Merge con costi dall'inventario unificato
         cols_to_pull = ["_SKU_KEY_", "Prezzo medio acquisto (€)", "Categoria"]
         cols_to_pull = [c for c in cols_to_pull if c in merged_df.columns]
-        ff_df = export_df.merge(merged_df[cols_to_pull], on="_SKU_KEY_", how="left", suffixes=("", "_inv"))
+        ff_df = export_df.merge(
+            merged_df[cols_to_pull],
+            on="_SKU_KEY_", how="left", suffixes=("", "_inv")
+        )
 
         # Calcolo del Prezzo minimo suggerito (€) per le righe del flat-file export
         def _min_price_row(row):
@@ -503,8 +762,10 @@ if export_file is not None:
 
         if "rule-name" not in ff_df.columns:
             ff_df["rule-name"] = ""
+
         if "country-code" not in ff_df.columns:
             ff_df["country-code"] = "IT"
+
         if "currency-code" not in ff_df.columns:
             ff_df["currency-code"] = "EUR"
 
@@ -529,10 +790,11 @@ if export_file is not None:
             ff_df_view["minimum-seller-allowed-price"] = ff_df_view["Prezzo minimo suggerito (€)"]
         else:
             ff_df_view["minimum-seller-allowed-price"] = ff_df_view["minimum-seller-allowed-price"].where(
-                ff_df_view["minimum-seller-allowed-price"].notna(), ff_df_view["Prezzo minimo suggerito (€)"]
+                ff_df_view["minimum-seller-allowed-price"].notna(),
+                ff_df_view["Prezzo minimo suggerito (€)"]
             )
 
-        ff_out = ff_df_view.dropna(subset=["SKU", "minimum-seller-allowed-price"])  # componi dataset esportabile
+        ff_out = ff_df_view.dropna(subset=["SKU", "minimum-seller-allowed-price"])
 
         st.dataframe(
             ff_out[[
@@ -566,7 +828,9 @@ edited_df = st.data_editor(
     key="merged_df_editor",
     use_container_width=True,
     hide_index=True,
-    column_config={inv_key: st.column_config.TextColumn(disabled=False)},
+    column_config={
+        inv_key: st.column_config.TextColumn(disabled=False)
+    },
 )
 
 edited_df["_SKU_KEY_"] = normalize_sku(edited_df[inv_key], parse_option)
@@ -591,10 +855,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("SKU totali", len(edited_df))
 with col2:
-    st.metric(
-        "Prezzo medio acquisto",
-        f"{pd.to_numeric(edited_df['Prezzo medio acquisto (€)'], errors='coerce').mean():.2f} €",
-    )
+    st.metric("Prezzo medio acquisto", f"{pd.to_numeric(edited_df['Prezzo medio acquisto (€)'], errors='coerce').mean():.2f} €")
 with col3:
     if "Quantita'" in edited_df.columns:
         valore = (
@@ -631,4 +892,4 @@ st.download_button(
 # ---------------------------------------------------------
 # Credits
 # ---------------------------------------------------------
-st.caption("Made with Streamlit · Patch header-detection flat-file export")
+st.caption("Made with Streamlit · Ultimo aggiornamento: 13 ago 2025")

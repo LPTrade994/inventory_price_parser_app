@@ -4,7 +4,7 @@
 # - unire inventario + acquisti per calcolare "Prezzo minimo suggerito (€)"
 # - leggere l'export (flat-file) di Amazon per generare rule-name + min price
 # - esportare un template identico a quello Amazon (doppio header)
-# Esecuzione locale:
+# Esecuzione:
 #   streamlit run inventory_price_parser_app.py
 # ---------------------------------------------------------
 
@@ -18,18 +18,16 @@ import streamlit as st
 # ---------------------------- Costanti ----------------------------
 CATEGORY_MAP = {
     "Videogiochi - Giochi e accessori": {"referral": 15.0, "closing": 0.81},
-    "Videogiochi - Console": {"referral": 8.0, "closing": 0.81},
-    "Libri": {"referral": 15.0, "closing": 1.01},
-    "Musica": {"referral": 15.0, "closing": 0.81},
-    "Video e DVD": {"referral": 15.0, "closing": 0.81},
-    "Software": {"referral": 15.0, "closing": 0.81},
-    "_default": {"referral": 15.0, "closing": 0.00},
+    "Videogiochi - Console": {"referral": 8.0,  "closing": 0.81},
+    "Libri":                  {"referral": 15.0, "closing": 1.01},
+    "Musica":                 {"referral": 15.0, "closing": 0.81},
+    "Video e DVD":            {"referral": 15.0, "closing": 0.81},
+    "Software":               {"referral": 15.0, "closing": 0.81},
+    "_default":               {"referral": 15.0, "closing": 0.00},
 }
 DST_PCT = 3.0  # Italia
 
-COUNTRY_CODES = {
-    "AE","AU","BE","BR","CA","CN","DE","ES","FR","GB","IT","JP","MX","NL","PL","SE","TR","UK","US","IE"
-}
+COUNTRY_CODES = {"AE","AU","BE","BR","CA","CN","DE","ES","FR","GB","IT","JP","MX","NL","PL","SE","TR","UK","US","IE"}
 
 # ---------------------------- UI base ----------------------------
 st.set_page_config(page_title="Inventory & Price Parser", layout="wide")
@@ -43,18 +41,15 @@ with st.sidebar:
     )
     inv_file = st.file_uploader(
         "📥 File inventario (es. ITALIA.xlsx o inventario.txt)",
-        type=["xlsx", "xls", "txt"],
-        key="inv_uploader",
+        type=["xlsx", "xls", "txt"], key="inv_uploader",
     )
     price_file = st.file_uploader(
         "📥 File acquisti (es. PREZZI ACQUISTO.xlsx o acquisti.txt)",
-        type=["xlsx", "xls", "txt"],
-        key="price_uploader",
+        type=["xlsx", "xls", "txt"], key="price_uploader",
     )
     export_file = st.file_uploader(
         "📥 Flat-file Amazon (export) • Non Automated SKUs",
-        type=["xlsx", "xls", "csv", "tsv"],
-        key="export_uploader",
+        type=["xlsx", "xls", "csv", "tsv"], key="export_uploader",
     )
     download_name = st.text_input("Nome file Excel da scaricare", value="inventario_con_prezzi.xlsx")
 
@@ -67,12 +62,10 @@ def load_excel(uploaded_file):
     if name.endswith(".txt"):
         uploaded_file.seek(0)
         content = uploaded_file.read().decode("latin-1", errors="ignore")
-        # prova TSV poi CSV con ;
         try:
             return pd.read_csv(io.StringIO(content), sep="\t", decimal=",")
         except Exception:
             return pd.read_csv(io.StringIO(content), sep=";", decimal=",")
-    # Excel
     try:
         return pd.read_excel(uploaded_file, engine="openpyxl")
     except Exception:
@@ -89,35 +82,27 @@ def _to_kebab(s: str) -> str:
 def load_amazon_export(uploaded_file):
     """Parser robusto del flat-file export (header variabile, CSV/XLSX/TSV)."""
     name = uploaded_file.name.lower()
-
     def _build_df_from_matrix(matrix):
-        # trova riga header che contiene "sku" o "seller-sku"
         header_idx, header_row = None, None
         for i in range(min(30, len(matrix))):
             row_vals = ["" if v is None else str(v) for v in matrix[i]]
             keb = [_to_kebab(v) for v in row_vals]
             if "sku" in keb or "seller-sku" in keb:
-                header_idx = i
-                header_row = keb
+                header_idx, header_row = i, keb
                 break
         if header_idx is None:
             header_idx = 1 if len(matrix) > 1 else 0
             header_row = [_to_kebab(v) for v in (matrix[header_idx] if matrix else [])]
-        data_rows = [list(r) for r in matrix[header_idx + 1 :]]
+        data_rows = [list(r) for r in matrix[header_idx + 1:]]
         df = pd.DataFrame(data_rows, columns=header_row)
         for col in df.select_dtypes(include="object").columns:
             df[col] = df[col].astype(str).str.strip()
-        df = df.rename(columns={"sku": "SKU", "seller-sku": "SKU", "current-selling-price": "Prezzo"})
-        return df
-
+        return df.rename(columns={"sku": "SKU", "seller-sku": "SKU", "current-selling-price": "Prezzo"})
     if name.endswith((".xlsx", ".xls")):
         uploaded_file.seek(0)
         wb = openpyxl.load_workbook(uploaded_file, read_only=True, data_only=True)
         sheet_name = next((n for n in [
-            "Modello assegnazione prezzo",
-            "Modello di assegnazione prezzo",
-            "Modello di assegnazione del prezzo",
-            "Esempio",
+            "Modello assegnazione prezzo","Modello di assegnazione prezzo","Modello di assegnazione del prezzo","Esempio",
         ] if n in wb.sheetnames), wb.sheetnames[0])
         ws = wb[sheet_name]
         matrix = list(ws.values)
@@ -136,14 +121,12 @@ def load_amazon_export(uploaded_file):
         df_raw = max(frames, key=lambda d: d.shape[1])
         matrix = df_raw.fillna("").values.tolist()
         df = _build_df_from_matrix(matrix)
-
-    # coercizioni numeriche
-    for c in [
-        "minimum-seller-allowed-price","maximum-seller-allowed-price",
-        "current-selling-price","buybox-landed-price","lowest-landed-price","sales-rank"
-    ]:
+    # numeriche utili
+    for c in ["minimum-seller-allowed-price","maximum-seller-allowed-price","current-selling-price",
+              "buybox-landed-price","lowest-landed-price","sales-rank"]:
         if c in df.columns:
             df[c] = pd.to_numeric(pd.Series(df[c]).astype(str).str.replace(",", "."), errors="coerce")
+    # normalizza
     if "rule-action" in df.columns:
         df["rule-action"] = df["rule-action"].astype(str).str.upper().replace({"": "START", "nan": "START"})
     if "country-code" in df.columns:
@@ -159,30 +142,26 @@ def normalize_sku(series: pd.Series, parse_suffix: bool) -> pd.Series:
     return series.str.rsplit("-", n=1).str[0] if parse_suffix else series
 
 def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, parse_suffix: bool):
-    inv_key_candidates = [c for c in inventory_df.columns if c.upper() in {"SKU","CODICE(ASIN)","CODICE","ASIN"}]
-    price_key_candidates = [c for c in purchase_df.columns if c.upper() in {"CODICE","SKU","CODICE(ASIN)"}]
+    inv_key_candidates   = [c for c in inventory_df.columns if c.upper() in {"SKU","CODICE(ASIN)","CODICE","ASIN"}]
+    price_key_candidates = [c for c in purchase_df.columns  if c.upper() in {"CODICE","SKU","CODICE(ASIN)"}]
     if not inv_key_candidates or not price_key_candidates:
         st.error("Assicurati che entrambi i file contengano almeno una colonna chiave tra: SKU, CODICE(ASIN), CODICE, ASIN.")
         st.stop()
-    inv_key = st.selectbox("Colonna SKU nell'inventario", inv_key_candidates, index=0)
+    inv_key   = st.selectbox("Colonna SKU nell'inventario", inv_key_candidates, index=0)
     price_key = st.selectbox("Colonna SKU nel file acquisti", price_key_candidates, index=0)
 
     inventory_df["_SKU_KEY_"] = normalize_sku(inventory_df[inv_key], parse_suffix)
     purchase_df["_SKU_KEY_"]  = normalize_sku(purchase_df[price_key], parse_suffix)
 
-    # individua colonna prezzo acquisto
-    candidate_price_cols = [
-        c for c in purchase_df.columns
-        if ("prezzo" in c.lower() and "medio" in c.lower()) or c.lower().strip() in {"prezzo","prezzo medio","prezzo medio (€)"}
-    ]
+    candidate_price_cols = [c for c in purchase_df.columns
+                            if ("prezzo" in c.lower() and "medio" in c.lower())
+                            or c.lower().strip() in {"prezzo","prezzo medio","prezzo medio (€)"}]
     if not candidate_price_cols:
         st.error("Colonna del prezzo d'acquisto non trovata (es. 'Prezzo medio', 'Prezzo').")
         st.stop()
     price_col = candidate_price_cols[0]
 
-    # mantiene Categoria se presente
     cat_cols = [c for c in purchase_df.columns if c.lower().strip() == "categoria"]
-
     optional_cols = [c for c in purchase_df.columns if c.lower().strip() in {
         "quantita'","quantità","prezzo","prezzo medio","codice(asin)","asin","sku",
         "country-code","currency-code","rule-name","rule-action","business-rule-name","business-rule-action",
@@ -207,49 +186,51 @@ def calc_min_price(
     margin_pct: float,
     shipping_credit: float = 0.0,
     subtract_sale_vat: bool = True,
-    vat_on_closing: bool = True,
-    margin_basis: str = "gross",  # "gross": margine su (P + credit) ; "exvat": su (P/(1+IVA) + credit)
+    apply_vat_on_fees: bool = False,   # ← per parità col Revenue Calculator lasciamo OFF
+    vat_on_closing: bool = True,       # usato solo se apply_vat_on_fees=True
+    margin_basis: str = "gross",       # "gross": margine su (P + credit) ; "exvat": su (P/(1+IVA) + credit)
 ):
     """Prezzo minimo che raggiunge il margine target (logica Revenue Calculator EU)."""
     cost = pd.to_numeric(row.get("Prezzo medio acquisto (€)"), errors="coerce")
     if not np.isfinite(cost) or cost <= 0:
         return None
 
+    # Parametri di lavoro
     A = float(referral_pct) / 100.0            # referral rate
-    B = float(closing_fee or 0.0)              # closing fee
-    d = float(dst_pct) / 100.0                 # DST rate
-    v_fee  = float(vat_sale_pct) / 100.0       # IVA su fee Amazon
+    B = float(closing_fee or 0.0)              # closing fee (0.81 in molte categorie media)
+    d = float(dst_pct) / 100.0                 # DST rate (3% in IT)
+    v_fee  = (float(vat_sale_pct) / 100.0) if apply_vat_on_fees else 0.0  # IVA su fee Amazon (spesso NON mostrata dal calculator)
     v_sale = float(vat_sale_pct) / 100.0       # IVA sulla vendita
     m = float(margin_pct) / 100.0              # margine target
 
-    Cb = float(shipping_credit or 0.0)         # credito spedizione (ricavo)
-    S  = float(ship_cost or 0.0)               # costo spedizione venditore
+    Cb = float(shipping_credit or 0.0)         # shipping addebitata al cliente (ricavo)
+    S  = float(ship_cost or 0.0)               # costo spedizione venditore (inseriscilo "ivato" se paghi così)
 
-    # Fee Amazon complessive come funzione di P:
+    # Fee Amazon come funzione lineare del prezzo lordo P
     # Referral = A * (P + Cb)
     # Closing  = B
-    # Fee tot = Referral*(1+v_fee+d) + B*(1 + (v_fee if vat_on_closing else 0) + d)
+    # DST      = d * (Referral + Closing)
+    # IVA fee  = v_fee * (Referral + (Closing se vat_on_closing))
     alpha = 1.0 - (1.0 + v_fee + d) * A
-    v_fee_closing = (v_fee if vat_on_closing else 0.0)
+    v_fee_closing = (v_fee if (apply_vat_on_fees and vat_on_closing) else 0.0)
     D = (1.0 + v_fee_closing + d) * B + cost + S
 
-    # Quota di IVA vendita che erode il profitto (se attivo)
+    # Quota IVA vendita che erode il profitto
     t = (v_sale / (1.0 + v_sale)) if subtract_sale_vat else 0.0
 
+    # Risoluzione analitica
     if margin_basis == "exvat":
-        u = 1.0 / (1.0 + v_sale)  # coeff per passare da lordo a netto IVA
+        u = 1.0 / (1.0 + v_sale)  # per P al netto IVA
         denom = alpha - t - m * u
         rhs   = D - (alpha - m) * Cb
-    else:
+    else:  # "gross"
         denom = alpha - t - m
         rhs   = D - (alpha - m) * Cb
 
     if abs(denom) < 1e-12:
         return None
     P = rhs / denom
-    if not np.isfinite(P) or P <= 0:
-        return None
-    return round(P, 2)
+    return round(P, 2) if np.isfinite(P) and P > 0 else None
 
 # ---------------------- Export template Amazon ---------------------
 def build_flatfile(df: pd.DataFrame, sku_col: str) -> pd.DataFrame:
@@ -268,19 +249,18 @@ def build_flatfile(df: pd.DataFrame, sku_col: str) -> pd.DataFrame:
         "maximum-seller-allowed-price": df.get("maximum-seller-allowed-price", ""),
         "country-code": df.get("country-code", "IT"),
         "currency-code": df.get("currency-code", "EUR"),
-        "rule-name": df.get("rule-name", "Rule1"),
+        "rule-name": df.get("rule-name", "AUTO"),
         "rule-action": df.get("rule-action", "START"),
         "business-rule-name": df.get("business-rule-name", ""),
         "business-rule-action": df.get("business-rule-action", ""),
     }
     df_data = pd.DataFrame(data)
-    df_full = pd.concat(
+    return pd.concat(
         [pd.DataFrame([header_desc], columns=field_names),
          pd.DataFrame([field_names], columns=field_names),
          df_data],
         ignore_index=True,
     )
-    return df_full
 
 def make_flatfile_bytes(df: pd.DataFrame) -> io.BytesIO:
     output = io.BytesIO()
@@ -290,7 +270,7 @@ def make_flatfile_bytes(df: pd.DataFrame) -> io.BytesIO:
     return output
 
 def highlight_below(row):
-    min_val = pd.to_numeric(row.get("Prezzo minimo suggerito (€)"), errors="coerce")
+    min_val   = pd.to_numeric(row.get("Prezzo minimo suggerito (€)"), errors="coerce")
     price_val = pd.to_numeric(row.get("Prezzo"), errors="coerce")
     if np.isfinite(min_val) and np.isfinite(price_val) and min_val > price_val:
         return ["background-color: lightcoral"] * len(row)
@@ -299,75 +279,59 @@ def highlight_below(row):
 # --------------------------- Caricamento ---------------------------
 inventory_df = load_excel(inv_file)
 purchase_df  = load_excel(price_file)
-
-# Rinomina chiavi standard
 rename_map = {"sku": "SKU", "seller-sku": "SKU", "current-selling-price": "Prezzo"}
-if inventory_df is not None:
-    inventory_df = inventory_df.rename(columns=rename_map)
-if purchase_df is not None:
-    purchase_df = purchase_df.rename(columns=rename_map)
+if inventory_df is not None: inventory_df = inventory_df.rename(columns=rename_map)
+if purchase_df  is not None: purchase_df  = purchase_df.rename(columns=rename_map)
 
-# -------------------- Modalità SOLO EXPORT + ACQUISTI --------------
+# ==================== Modalità 1: SOLO EXPORT + ACQUISTI ====================
 if export_file is not None and purchase_df is not None and inventory_df is None:
     st.subheader("Non Automated SKUs – da export Amazon (solo export + acquisti)")
     try:
         export_df = load_amazon_export(export_file)
     except Exception as e:
-        st.error(f"Errore nel parsing del flat-file export: {e}")
-        st.stop()
+        st.error(f"Errore nel parsing del flat-file export: {e}"); st.stop()
     if "SKU" not in export_df.columns:
-        st.error("Il flat-file export non contiene 'SKU'.")
-        st.stop()
+        st.error("Il flat-file export non contiene 'SKU'."); st.stop()
     export_df["_SKU_KEY_"] = normalize_sku(export_df["SKU"], parse_suffix)
 
-    # chiave e colonna costo nel file acquisti
     price_key_candidates = [c for c in purchase_df.columns if c.upper() in {"CODICE","SKU","CODICE(ASIN)"}]
     if not price_key_candidates:
-        st.error("Nel file acquisti manca la colonna SKU/CODICE/CODICE(ASIN).")
-        st.stop()
+        st.error("Nel file acquisti manca la colonna SKU/CODICE/CODICE(ASIN)."); st.stop()
     price_key = st.selectbox("Colonna SKU nel file acquisti", price_key_candidates, index=0, key="exponly_pricekey")
     purchase_df["_SKU_KEY_"] = normalize_sku(purchase_df[price_key], parse_suffix)
 
-    candidate_price_cols = [
-        c for c in purchase_df.columns
-        if ("prezzo" in c.lower() and "medio" in c.lower()) or c.lower().strip() in {"prezzo","prezzo medio","prezzo medio (€)"}
-    ]
+    candidate_price_cols = [c for c in purchase_df.columns if ("prezzo" in c.lower() and "medio" in c.lower())
+                            or c.lower().strip() in {"prezzo","prezzo medio","prezzo medio (€)"}]
     if not candidate_price_cols:
-        st.error("Colonna prezzo d'acquisto non trovata (es. 'Prezzo medio').")
-        st.stop()
+        st.error("Colonna prezzo d'acquisto non trovata (es. 'Prezzo medio')."); st.stop()
     price_col = candidate_price_cols[0] if len(candidate_price_cols) == 1 else \
         st.selectbox("Colonna prezzo d'acquisto", candidate_price_cols, index=0, key="exponly_pricecol")
 
     cat_cols = [c for c in purchase_df.columns if c.lower().strip() == "categoria"]
     cols = ["_SKU_KEY_", price_col] + (["Categoria"] if cat_cols else [])
-    if cat_cols:
-        purchase_df = purchase_df.rename(columns={cat_cols[0]: "Categoria"})
+    if cat_cols: purchase_df = purchase_df.rename(columns={cat_cols[0]: "Categoria"})
 
     merged_export = export_df.merge(
         purchase_df[cols].rename(columns={price_col: "Prezzo medio acquisto (€)"}),
         on="_SKU_KEY_", how="left"
     )
 
-    st.markdown("### Parametri costi e margini (solo export + acquisti)")
+    st.markdown("### Parametri costi e margini")
     defaults = CATEGORY_MAP["_default"]
     referral_fee_pct = st.number_input("% Commissione Amazon (referral)", value=defaults["referral"], min_value=0.0, key="exponly_ref")
-    closing_fee      = st.number_input("Commissione di chiusura €", value=float(defaults["closing"]), min_value=0.0, key="exponly_close")
-    shipping_cost    = st.number_input("Costo spedizione del venditore €", value=0.0, min_value=0.0, key="exponly_ship")
+    closing_fee      = st.number_input("Commissione di chiusura variabile €", value=float(defaults["closing"]), min_value=0.0, key="exponly_close")
+    shipping_cost    = st.number_input("Costo spedizione del venditore € (ivato)", value=0.0, min_value=0.0, key="exponly_ship")
     shipping_credit  = st.number_input("Spedizione addebitata al cliente (credito) €", value=0.0, min_value=0.0, key="exponly_shipcredit")
     vat_pct          = st.number_input("IVA %", value=22.0, min_value=0.0, step=0.1, key="exponly_vat")
-    margin_pct       = st.number_input("Margine desiderato %", value=20.0, min_value=0.0, key="exponly_margin")
+    margin_pct       = st.number_input("Margine desiderato %", value=10.0, min_value=0.0, key="exponly_margin")
     col1, col2 = st.columns(2)
     with col1:
-        subtract_sale_vat = st.checkbox("Sottrai IVA sulla vendita dal profitto", value=True, key="exponly_subvat")
+        subtract_sale_vat = st.checkbox("Sottrai IVA sulla vendita dal profitto (parità calculator)", value=True, key="exponly_subvat")
     with col2:
-        vat_on_closing = st.checkbox("IVA anche sulla commissione di chiusura", value=True, key="exponly_vatclosing")
-    margin_basis = st.radio(
-        "Base margine",
-        options=["gross","exvat"],
-        index=0,
-        key="exponly_basis",
-        format_func=lambda x: "Ricavo lordo (prezzo + shipping credit)" if x=="gross" else "Ricavo netto IVA (prezzo/1+IVA + shipping credit)"
-    )
+        apply_vat_on_fees = st.checkbox("Aggiungi IVA alle fee Amazon (referral/chiusura)", value=False, key="exponly_vatfees")
+    vat_on_closing = st.checkbox("IVA anche sulla commissione di chiusura", value=True, key="exponly_vatclosing", disabled=not apply_vat_on_fees)
+    margin_basis = st.radio("Base margine", ["gross","exvat"], index=0, key="exponly_basis",
+                            format_func=lambda x: "Ricavo lordo (prezzo + shipping credit)" if x=="gross" else "Ricavo netto IVA (prezzo/1+IVA + shipping credit)")
 
     merged_export["Prezzo medio acquisto (€)"] = pd.to_numeric(merged_export["Prezzo medio acquisto (€)"], errors="coerce")
     merged_export["Prezzo minimo suggerito (€)"] = merged_export.apply(
@@ -375,28 +339,22 @@ if export_file is not None and purchase_df is not None and inventory_df is None:
         referral_pct=referral_fee_pct, closing_fee=closing_fee, dst_pct=DST_PCT,
         ship_cost=shipping_cost, vat_sale_pct=vat_pct, margin_pct=margin_pct,
         shipping_credit=shipping_credit, subtract_sale_vat=subtract_sale_vat,
-        vat_on_closing=vat_on_closing, margin_basis=margin_basis,
+        apply_vat_on_fees=apply_vat_on_fees, vat_on_closing=vat_on_closing, margin_basis=margin_basis,
     )
 
-    only_missing_min = st.checkbox("Mostra solo righe senza 'minimum-seller-allowed-price' nel file", value=True, key="exponly_missmin")
+    # ---- Rule-name uniforme (nessun suffisso) ----
+    force_rule = st.checkbox("Forza lo stesso rule-name per tutti gli SKU", value=True, key="exponly_force_rule")
+    rule_name_value = st.text_input("Rule name", value="AUTO", key="exponly_rule_value")
+    merged_export["rule-action"] = "START"
+    merged_export["country-code"] = "IT"
+    merged_export["currency-code"] = "EUR"
+    if force_rule:
+        merged_export["rule-name"] = rule_name_value
+    else:
+        merged_export["rule-name"] = merged_export.get("rule-name", "").fillna("").replace("", rule_name_value)
+
+    only_missing_min = st.checkbox("Mostra solo righe senza 'minimum-seller-allowed-price'", value=True, key="exponly_missmin")
     overwrite_min    = st.checkbox("Sovrascrivi 'minimum-seller-allowed-price' se già presente", value=False, key="exponly_overwrite")
-    default_rule_base = st.text_input("Rule name di default", value="AUTO", key="exponly_rulename")
-    today_str = pd.Timestamp.today().strftime("%Y%m%d")
-
-    for col in ["rule-name","country-code","currency-code","rule-action"]:
-        if col not in merged_export.columns:
-            merged_export[col] = ""
-    merged_export["country-code"] = merged_export["country-code"].replace("", "IT")
-    merged_export["currency-code"] = merged_export["currency-code"].replace("", "EUR")
-    merged_export["rule-action"] = merged_export["rule-action"].replace("", "START").str.upper()
-
-    def make_rule_name(row):
-        rn = str(row.get("rule-name") or "").strip()
-        if rn: return rn
-        cc = str(row.get("country-code") or "IT").upper()
-        return f"{default_rule_base}-{cc}-{today_str}"
-    merged_export["rule-name"] = merged_export.apply(make_rule_name, axis=1)
-
     view = merged_export.copy()
     if "minimum-seller-allowed-price" in view.columns and only_missing_min:
         view = view[view["minimum-seller-allowed-price"].isna()]
@@ -409,7 +367,8 @@ if export_file is not None and purchase_df is not None and inventory_df is None:
 
     ff_out = view.dropna(subset=["SKU", "minimum-seller-allowed-price"])
     st.dataframe(
-        ff_out[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price","Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(100),
+        ff_out[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price",
+                "Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
         use_container_width=True, hide_index=True
     )
     st.download_button(
@@ -420,31 +379,26 @@ if export_file is not None and purchase_df is not None and inventory_df is None:
     )
     st.stop()
 
-# -------------------- Modalità SOLO EXPORT + INVENTARIO ------------
+# ==================== Modalità 2: SOLO EXPORT + INVENTARIO ====================
 if export_file is not None and inventory_df is not None and purchase_df is None:
     st.subheader("Non Automated SKUs – da export Amazon (solo export + inventario)")
     try:
         export_df = load_amazon_export(export_file)
     except Exception as e:
-        st.error(f"Errore nel parsing del flat-file export: {e}")
-        st.stop()
+        st.error(f"Errore nel parsing del flat-file export: {e}"); st.stop()
     if "SKU" not in export_df.columns:
-        st.error("Il flat-file export non contiene 'SKU'.")
-        st.stop()
+        st.error("Il flat-file export non contiene 'SKU'."); st.stop()
     export_df["_SKU_KEY_"] = normalize_sku(export_df["SKU"], parse_suffix)
 
     inv_key_candidates = [c for c in inventory_df.columns if c.upper() in {"SKU","CODICE(ASIN)","CODICE","ASIN"}]
     if not inv_key_candidates:
-        st.error("Nel file inventario manca la colonna SKU/CODICE(ASIN)/CODICE/ASIN.")
-        st.stop()
+        st.error("Nel file inventario manca la colonna SKU/CODICE(ASIN)/CODICE/ASIN."); st.stop()
     inv_key = st.selectbox("Colonna SKU nell'inventario", inv_key_candidates, index=0, key="expinv_invkey")
     inventory_df["_SKU_KEY_"] = normalize_sku(inventory_df[inv_key], parse_suffix)
 
-    # scegli colonna costo dall'inventario
-    priority = [
-        "Prezzo medio acquisto (€)","Prezzo medio acquisto","Prezzo acquisto","Prezzo d'acquisto",
-        "Costo acquisto","Costo","Costo unitario","Costo medio","Prezzo medio",
-    ]
+    # colonna costo dall'inventario
+    priority = ["Prezzo medio acquisto (€)","Prezzo medio acquisto","Prezzo acquisto","Prezzo d'acquisto",
+                "Costo acquisto","Costo","Costo unitario","Costo medio","Prezzo medio"]
     name_hits = [c for c in inventory_df.columns if any(p in c.lower() for p in ["acquisto","costo","cost","purchase","prezzo"])]
     candidates = [c for c in priority if c in inventory_df.columns]
     for c in name_hits:
@@ -463,26 +417,24 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
 
     merged_export = export_df.merge(inv_subset, on="_SKU_KEY_", how="left")
 
-    st.markdown("### Parametri costi e margini (solo export + inventario)")
+    st.markdown("### Parametri costi e margini")
     cats = list(CATEGORY_MAP.keys())
     selected_cat = st.selectbox("Categoria predefinita", cats, index=0, key="expinv_cat")
     defaults = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"])
     referral_fee_pct = st.number_input("% Commissione Amazon (referral)", value=defaults["referral"], min_value=0.0, key="expinv_ref")
-    closing_fee      = st.number_input("Commissione di chiusura €", value=float(defaults["closing"]), min_value=0.0, key="expinv_close")
-    shipping_cost    = st.number_input("Costo spedizione del venditore €", value=0.0, min_value=0.0, key="expinv_ship")
+    closing_fee      = st.number_input("Commissione di chiusura variabile €", value=float(defaults["closing"]), min_value=0.0, key="expinv_close")
+    shipping_cost    = st.number_input("Costo spedizione del venditore € (ivato)", value=0.0, min_value=0.0, key="expinv_ship")
     shipping_credit  = st.number_input("Spedizione addebitata al cliente (credito) €", value=0.0, min_value=0.0, key="expinv_shipcredit")
     vat_pct          = st.number_input("IVA %", value=22.0, min_value=0.0, step=0.1, key="expinv_vat")
-    margin_pct       = st.number_input("Margine desiderato %", value=20.0, min_value=0.0, key="expinv_margin")
+    margin_pct       = st.number_input("Margine desiderato %", value=10.0, min_value=0.0, key="expinv_margin")
     col1, col2 = st.columns(2)
     with col1:
-        subtract_sale_vat = st.checkbox("Sottrai IVA sulla vendita dal profitto", value=True, key="expinv_subvat")
+        subtract_sale_vat = st.checkbox("Sottrai IVA sulla vendita dal profitto (parità calculator)", value=True, key="expinv_subvat")
     with col2:
-        vat_on_closing = st.checkbox("IVA anche sulla commissione di chiusura", value=True, key="expinv_vatclosing")
-    margin_basis = st.radio(
-        "Base margine",
-        options=["gross","exvat"], index=0, key="expinv_basis",
-        format_func=lambda x: "Ricavo lordo (prezzo + shipping credit)" if x=="gross" else "Ricavo netto IVA (prezzo/1+IVA + shipping credit)"
-    )
+        apply_vat_on_fees = st.checkbox("Aggiungi IVA alle fee Amazon (referral/chiusura)", value=False, key="expinv_vatfees")
+    vat_on_closing = st.checkbox("IVA anche sulla commissione di chiusura", value=True, key="expinv_vatclosing", disabled=not apply_vat_on_fees)
+    margin_basis = st.radio("Base margine", ["gross","exvat"], index=0, key="expinv_basis",
+                            format_func=lambda x: "Ricavo lordo (prezzo + shipping credit)" if x=="gross" else "Ricavo netto IVA (prezzo/1+IVA + shipping credit)")
 
     merged_export["Prezzo medio acquisto (€)"] = pd.to_numeric(merged_export["Prezzo medio acquisto (€)"], errors="coerce")
     merged_export["Prezzo minimo suggerito (€)"] = merged_export.apply(
@@ -490,28 +442,22 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
         referral_pct=referral_fee_pct, closing_fee=closing_fee, dst_pct=DST_PCT,
         ship_cost=shipping_cost, vat_sale_pct=vat_pct, margin_pct=margin_pct,
         shipping_credit=shipping_credit, subtract_sale_vat=subtract_sale_vat,
-        vat_on_closing=vat_on_closing, margin_basis=margin_basis,
+        apply_vat_on_fees=apply_vat_on_fees, vat_on_closing=vat_on_closing, margin_basis=margin_basis,
     )
 
-    only_missing_min = st.checkbox("Mostra solo righe senza 'minimum-seller-allowed-price' nel file", value=True, key="expinv_missmin")
+    # ---- Rule-name uniforme (nessun suffisso) ----
+    force_rule = st.checkbox("Forza lo stesso rule-name per tutti gli SKU", value=True, key="expinv_force_rule")
+    rule_name_value = st.text_input("Rule name", value="AUTO", key="expinv_rule_value")
+    merged_export["rule-action"]   = "START"
+    merged_export["country-code"]  = "IT"
+    merged_export["currency-code"] = "EUR"
+    if force_rule:
+        merged_export["rule-name"] = rule_name_value
+    else:
+        merged_export["rule-name"] = merged_export.get("rule-name", "").fillna("").replace("", rule_name_value)
+
+    only_missing_min = st.checkbox("Mostra solo righe senza 'minimum-seller-allowed-price'", value=True, key="expinv_missmin")
     overwrite_min    = st.checkbox("Sovrascrivi 'minimum-seller-allowed-price' se già presente", value=False, key="expinv_overwrite")
-    default_rule_base = st.text_input("Rule name di default", value="AUTO", key="expinv_rulename")
-    today_str = pd.Timestamp.today().strftime("%Y%m%d")
-
-    for col in ["rule-name","country-code","currency-code","rule-action"]:
-        if col not in merged_export.columns:
-            merged_export[col] = ""
-    merged_export["country-code"] = merged_export["country-code"].replace("", "IT")
-    merged_export["currency-code"] = merged_export["currency-code"].replace("", "EUR")
-    merged_export["rule-action"] = merged_export["rule-action"].replace("", "START").str.upper()
-
-    def make_rule_name(row):
-        rn = str(row.get("rule-name") or "").strip()
-        if rn: return rn
-        cc = str(row.get("country-code") or "IT").upper()
-        return f"{default_rule_base}-{cc}-{today_str}"
-    merged_export["rule-name"] = merged_export.apply(make_rule_name, axis=1)
-
     view = merged_export.copy()
     if "minimum-seller-allowed-price" in view.columns and only_missing_min:
         view = view[view["minimum-seller-allowed-price"].isna()]
@@ -524,7 +470,8 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
 
     ff_out = view.dropna(subset=["SKU", "minimum-seller-allowed-price"])
     st.dataframe(
-        ff_out[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price","Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(100),
+        ff_out[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price",
+                "Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
         use_container_width=True, hide_index=True
     )
     st.download_button(
@@ -535,51 +482,47 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
     )
     st.stop()
 
-# -------------------- Modalità COMPLETA (inv + acquisti) ----------
+# ==================== Modalità 3: COMPLETA (inv + acquisti) ====================
 if inventory_df is None or purchase_df is None:
     st.info("👈 Carica inventario + acquisti, oppure usa una delle modalità export.")
     st.stop()
 
-# Merge principale
 merged_df, inv_key = get_merged_inventory(inventory_df, purchase_df, parse_suffix)
 
-# Parametri globali
+# Parametri globali (usati anche dal builder finale)
 st.subheader("Parametri costi e margini")
 cats = list(CATEGORY_MAP.keys())
 selected_cat = st.selectbox("Categoria", cats)
 defaults = CATEGORY_MAP.get(selected_cat, CATEGORY_MAP["_default"])
 referral_fee_pct = st.number_input("% Commissione Amazon (referral)", value=defaults["referral"], min_value=0.0)
-closing_fee      = st.number_input("Commissione di chiusura €", value=float(defaults["closing"]), min_value=0.0, help="Es. Videogiochi EU: 0,81 €")
-shipping_cost    = st.number_input("Costo spedizione del venditore €", value=0.0, min_value=0.0)
-shipping_credit  = st.number_input("Spedizione addebitata al cliente (credito) €", value=0.0, min_value=0.0, help="Se Amazon accredita una tariffa di spedizione al venditore, inseriscila qui.")
+closing_fee      = st.number_input("Commissione di chiusura variabile €", value=float(defaults["closing"]), min_value=0.0, help="Es. Videogiochi EU: 0,81 €")
+shipping_cost    = st.number_input("Costo spedizione del venditore € (ivato)", value=0.0, min_value=0.0)
+shipping_credit  = st.number_input("Spedizione addebitata al cliente (credito) €", value=0.0, min_value=0.0)
 vat_pct          = st.number_input("IVA %", value=22.0, min_value=0.0, step=0.1)
-margin_pct       = st.number_input("Margine desiderato %", value=20.0, min_value=0.0)
+margin_pct       = st.number_input("Margine desiderato %", value=10.0, min_value=0.0)
 col1, col2 = st.columns(2)
 with col1:
-    subtract_sale_vat = st.checkbox("Sottrai IVA sulla vendita dal profitto (parità con Revenue Calculator)", value=True)
+    subtract_sale_vat = st.checkbox("Sottrai IVA sulla vendita dal profitto (parità calculator)", value=True)
 with col2:
-    vat_on_closing = st.checkbox("Applica IVA anche alla commissione di chiusura", value=True)
+    apply_vat_on_fees = st.checkbox("Aggiungi IVA alle fee Amazon (referral/chiusura)", value=False)
+vat_on_closing = st.checkbox("IVA anche sulla commissione di chiusura", value=True, disabled=not apply_vat_on_fees)
 margin_basis = st.radio(
-    "Base margine",
-    options=["gross","exvat"], index=0,
+    "Base margine", ["gross","exvat"], index=0,
     format_func=lambda x: "Ricavo lordo (prezzo + shipping credit)" if x=="gross" else "Ricavo netto IVA (prezzo/1+IVA + shipping credit)"
 )
 
-# Calcolo minimi
 merged_df["Prezzo medio acquisto (€)"] = pd.to_numeric(merged_df["Prezzo medio acquisto (€)"], errors="coerce")
 merged_df["Prezzo minimo suggerito (€)"] = merged_df.apply(
     calc_min_price, axis=1,
     referral_pct=referral_fee_pct, closing_fee=closing_fee, dst_pct=DST_PCT,
     ship_cost=shipping_cost, vat_sale_pct=vat_pct, margin_pct=margin_pct,
     shipping_credit=shipping_credit, subtract_sale_vat=subtract_sale_vat,
-    vat_on_closing=vat_on_closing, margin_basis=margin_basis,
+    apply_vat_on_fees=apply_vat_on_fees, vat_on_closing=vat_on_closing, margin_basis=margin_basis,
 )
 
-# Filtro opzionale
 show_only_matches = st.checkbox("Mostra solo articoli presenti nel file acquisti", value=False)
 display_df = merged_df if not show_only_matches else merged_df[merged_df["Prezzo medio acquisto (€)"].notna()]
 
-# Dashboard
 st.subheader("Anteprima dataset unificato")
 edited_df = st.data_editor(
     display_df, key="merged_df_editor", use_container_width=True, hide_index=True,
@@ -593,18 +536,16 @@ if st.button("🔄 Ricalcola prezzi minimi"):
         referral_pct=referral_fee_pct, closing_fee=closing_fee, dst_pct=DST_PCT,
         ship_cost=shipping_cost, vat_sale_pct=vat_pct, margin_pct=margin_pct,
         shipping_credit=shipping_credit, subtract_sale_vat=subtract_sale_vat,
-        vat_on_closing=vat_on_closing, margin_basis=margin_basis,
+        apply_vat_on_fees=apply_vat_on_fees, vat_on_closing=vat_on_closing, margin_basis=margin_basis,
     )
 
 st.dataframe(edited_df.style.apply(highlight_below, axis=1), use_container_width=True, hide_index=True)
 
 # KPI
-colA, colB, colC = st.columns(3)
-with colA:
-    st.metric("SKU totali", len(edited_df))
-with colB:
-    st.metric("Prezzo medio acquisto", f"{pd.to_numeric(edited_df['Prezzo medio acquisto (€)'], errors='coerce').mean():.2f} €")
-with colC:
+c1, c2, c3 = st.columns(3)
+with c1: st.metric("SKU totali", len(edited_df))
+with c2: st.metric("Prezzo medio acquisto", f"{pd.to_numeric(edited_df['Prezzo medio acquisto (€)'], errors='coerce').mean():.2f} €")
+with c3:
     if "Quantita'" in edited_df.columns:
         valore = (
             pd.to_numeric(edited_df["Prezzo"], errors="coerce").fillna(0)
@@ -614,9 +555,9 @@ with colC:
     else:
         st.metric("Valore inventario (listino)", "—")
 
-# Se è caricato anche l'export, offri il builder usando i costi già mergiati
+# ---- Builder export anche quando usi la modalità completa ----
 if export_file is not None:
-    st.subheader("Non Automated SKUs – builder da export Amazon (con costi dal merge)")
+    st.subheader("Non Automated SKUs – builder da export Amazon (costi dal merge)")
     try:
         export_df2 = load_amazon_export(export_file)
     except Exception as e:
@@ -624,37 +565,28 @@ if export_file is not None:
         export_df2 = None
     if export_df2 is not None and "SKU" in export_df2.columns:
         export_df2["_SKU_KEY_"] = normalize_sku(export_df2["SKU"], parse_suffix)
-        ff_df = export_df2.merge(
-            edited_df[["_SKU_KEY_", "Prezzo medio acquisto (€)"]],
-            on="_SKU_KEY_", how="left"
-        )
+        ff_df = export_df2.merge(edited_df[["_SKU_KEY_", "Prezzo medio acquisto (€)"]], on="_SKU_KEY_", how="left")
         ff_df["Prezzo minimo suggerito (€)"] = ff_df.apply(
             calc_min_price, axis=1,
             referral_pct=referral_fee_pct, closing_fee=closing_fee, dst_pct=DST_PCT,
             ship_cost=shipping_cost, vat_sale_pct=vat_pct, margin_pct=margin_pct,
             shipping_credit=shipping_credit, subtract_sale_vat=subtract_sale_vat,
-            vat_on_closing=vat_on_closing, margin_basis=margin_basis,
+            apply_vat_on_fees=apply_vat_on_fees, vat_on_closing=vat_on_closing, margin_basis=margin_basis,
         )
+
+        # Rule-name uniforme
+        force_rule_all = st.checkbox("Forza lo stesso rule-name per tutti gli SKU (export)", value=True, key="expfull_force_rule")
+        rule_name_value_all = st.text_input("Rule name (export)", value="AUTO", key="expfull_rule_value")
+        ff_df["rule-action"]   = "START"
+        ff_df["country-code"]  = "IT"
+        ff_df["currency-code"] = "EUR"
+        if force_rule_all:
+            ff_df["rule-name"] = rule_name_value_all
+        else:
+            ff_df["rule-name"] = ff_df.get("rule-name", "").fillna("").replace("", rule_name_value_all)
 
         only_missing_min2 = st.checkbox("Mostra solo senza 'minimum-seller-allowed-price' (export)", value=True, key="exp_full_missmin")
         overwrite_min2    = st.checkbox("Sovrascrivi 'minimum-seller-allowed-price' (export)", value=False, key="exp_full_overwrite")
-        default_rule_base2 = st.text_input("Rule name di default (export)", value="AUTO", key="exp_full_rulename")
-        today_str2 = pd.Timestamp.today().strftime("%Y%m%d")
-
-        for col in ["rule-name","country-code","currency-code","rule-action"]:
-            if col not in ff_df.columns:
-                ff_df[col] = ""
-        ff_df["country-code"] = ff_df["country-code"].replace("", "IT")
-        ff_df["currency-code"] = ff_df["currency-code"].replace("", "EUR")
-        ff_df["rule-action"] = ff_df["rule-action"].replace("", "START").str.upper()
-
-        def make_rule_name2(row):
-            rn = str(row.get("rule-name") or "").strip()
-            if rn: return rn
-            cc = str(row.get("country-code") or "IT").upper()
-            return f"{default_rule_base2}-{cc}-{today_str2}"
-        ff_df["rule-name"] = ff_df.apply(make_rule_name2, axis=1)
-
         view2 = ff_df.copy()
         if "minimum-seller-allowed-price" in view2.columns and only_missing_min2:
             view2 = view2[view2["minimum-seller-allowed-price"].isna()]
@@ -667,7 +599,8 @@ if export_file is not None:
 
         ff_out2 = view2.dropna(subset=["SKU", "minimum-seller-allowed-price"])
         st.dataframe(
-            ff_out2[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price","Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(100),
+            ff_out2[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price",
+                     "Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
             use_container_width=True, hide_index=True
         )
         st.download_button(

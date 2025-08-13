@@ -1,12 +1,12 @@
 # inventory_price_parser_app.py
 # ---------------------------------------------------------
 # Streamlit web-app per:
-# - Unire inventario + acquisti e calcolare "Prezzo minimo suggerito (€)"
-# - Leggere l'export (flat-file) Amazon e generare rule-name + min price
-# - Esportare un template identico a quello Amazon (doppio header)
-# Nota: ora il flat-file mantiene i country-code dell’export e compila currency-code coerenti.
-# Esecuzione:
-#   streamlit run inventory_price_parser_app.py
+# - unire inventario + acquisti per calcolare "Prezzo minimo suggerito (€)"
+# - leggere l'export Amazon (flat-file) e preparare il file per Automate Pricing
+# - mantenere i country-code dell’export e compilare currency-code solo se mancante
+# - applicare un rule-name identico per tutti gli SKU (nessun suffisso)
+#
+# Esecuzione: streamlit run inventory_price_parser_app.py
 # ---------------------------------------------------------
 
 import io
@@ -28,13 +28,16 @@ CATEGORY_MAP = {
 }
 DST_PCT = 3.0  # Italia
 
-COUNTRY_CODES = {"AE","AU","BE","BR","CA","CN","DE","ES","FR","GB","IT","JP","MX","NL","PL","SE","TR","UK","US","IE"}
+VALID_COUNTRIES = {
+    "AE","AU","BE","BR","CA","CN","DE","ES","FR","GB","IT","JP","MX","NL","PL","SE","TR","UK","US","IE"
+}
 
-# mappa Paese → Valuta per fill automatico laddove mancante
+# Mappa Paese → Valuta (usata SOLO per riempire i vuoti, mai per sovrascrivere)
 CURRENCY_BY_COUNTRY = {
     "IT":"EUR","DE":"EUR","FR":"EUR","ES":"EUR","NL":"EUR","BE":"EUR","IE":"EUR",
-    "PL":"PLN","SE":"SEK","GB":"GBP","UK":"GBP","US":"USD","CA":"CAD","MX":"MXN",
-    "JP":"JPY","CN":"CNY","AE":"AED","AU":"AUD","BR":"BRL","TR":"TRY",
+    "PL":"PLN","SE":"SEK","GB":"GBP","UK":"GBP",
+    "US":"USD","CA":"CAD","MX":"MXN","JP":"JPY","CN":"CNY",
+    "AE":"AED","AU":"AUD","BR":"BRL","TR":"TRY",
 }
 
 # ---------------------------- UI base ----------------------------
@@ -47,9 +50,12 @@ with st.sidebar:
         "Ignora suffisso dopo l'ultimo '-' nello SKU (es. 4556415-2-XY → 4556415-2)",
         value=True,
     )
-    inv_file = st.file_uploader("📥 File inventario (es. ITALIA.xlsx o inventario.txt)", type=["xlsx","xls","txt"], key="inv_uploader")
-    price_file = st.file_uploader("📥 File acquisti (es. PREZZI ACQUISTO.xlsx o acquisti.txt)", type=["xlsx","xls","txt"], key="price_uploader")
-    export_file = st.file_uploader("📥 Flat-file Amazon (export) • Non Automated SKUs", type=["xlsx","xls","csv","tsv"], key="export_uploader")
+    inv_file = st.file_uploader("📥 File inventario (es. ITALIA.xlsx o inventario.txt)",
+                                type=["xlsx","xls","txt"], key="inv_uploader")
+    price_file = st.file_uploader("📥 File acquisti (es. PREZZI ACQUISTO.xlsx o acquisti.txt)",
+                                  type=["xlsx","xls","txt"], key="price_uploader")
+    export_file = st.file_uploader("📥 Flat-file Amazon (export) • Non Automated SKUs",
+                                   type=["xlsx","xls","csv","tsv"], key="export_uploader")
     download_name = st.text_input("Nome file Excel da scaricare", value="inventario_con_prezzi.xlsx")
 
 # ------------------------- Funzioni utilità ------------------------
@@ -79,11 +85,10 @@ def _to_kebab(s: str) -> str:
     return s
 
 def load_amazon_export(uploaded_file):
-    """Parser robusto del flat-file export (header variabile, CSV/XLSX/TSV)."""
+    """Parser robusto dell'export Automate Pricing (header variabile, CSV/XLSX/TSV)."""
     name = uploaded_file.name.lower()
 
     def _build_df_from_matrix(matrix):
-        # trova riga header
         header_idx, header_row = None, None
         for i in range(min(30, len(matrix))):
             row_vals = ["" if v is None else str(v) for v in matrix[i]]
@@ -94,31 +99,28 @@ def load_amazon_export(uploaded_file):
         if header_idx is None:
             header_idx = 1 if len(matrix) > 1 else 0
             header_row = [_to_kebab(v) for v in (matrix[header_idx] if matrix else [])]
-
-        data_rows = [list(r) for r in matrix[header_idx + 1:]]
+        data_rows = [list(r) for r in matrix[header_idx+1:]]
         df = pd.DataFrame(data_rows, columns=header_row)
-        # pulizie
+        # normalizza stringhe
         for col in df.select_dtypes(include="object").columns:
             df[col] = df[col].astype(str).str.strip()
         # alias
-        df = df.rename(columns={"sku": "SKU", "seller-sku": "SKU", "current-selling-price": "Prezzo"})
-        return df
+        return df.rename(columns={"sku":"SKU","seller-sku":"SKU","current-selling-price":"Prezzo"})
 
-    if name.endswith((".xlsx", ".xls")):
+    if name.endswith((".xlsx",".xls")):
         uploaded_file.seek(0)
         wb = openpyxl.load_workbook(uploaded_file, read_only=True, data_only=True)
         sheet_name = next((n for n in [
-            "Modello assegnazione prezzo", "Modello di assegnazione prezzo",
-            "Modello di assegnazione del prezzo", "Esempio",
+            "Modello assegnazione prezzo","Modello di assegnazione prezzo",
+            "Modello di assegnazione del prezzo","Esempio",
         ] if n in wb.sheetnames), wb.sheetnames[0])
         ws = wb[sheet_name]
-        matrix = list(ws.values)
-        df = _build_df_from_matrix(matrix)
+        df = _build_df_from_matrix(list(ws.values))
     else:
         uploaded_file.seek(0)
         content = uploaded_file.read().decode("utf-8", errors="ignore")
         frames = []
-        for sep in [",", "\t", ";", "|"]:
+        for sep in [",","\t",";","|"]:
             try:
                 frames.append(pd.read_csv(io.StringIO(content), sep=sep, header=None, dtype=str))
             except Exception:
@@ -126,46 +128,42 @@ def load_amazon_export(uploaded_file):
         if not frames:
             raise ValueError("Impossibile leggere il flat-file export (CSV/TSV)")
         df_raw = max(frames, key=lambda d: d.shape[1])
-        matrix = df_raw.fillna("").values.tolist()
-        df = _build_df_from_matrix(matrix)
+        df = _build_df_from_matrix(df_raw.fillna("").values.tolist())
 
     # coercizioni numeriche utili
-    for c in ["minimum-seller-allowed-price","maximum-seller-allowed-price","current-selling-price",
-              "buybox-landed-price","lowest-landed-price","sales-rank"]:
+    for c in ["minimum-seller-allowed-price","maximum-seller-allowed-price",
+              "current-selling-price","buybox-landed-price","lowest-landed-price","sales-rank"]:
         if c in df.columns:
             df[c] = pd.to_numeric(pd.Series(df[c]).astype(str).str.replace(",", "."), errors="coerce")
 
-    # normalizza campi chiave (ma non sovrascrivere i valori presenti)
-    if "rule-action" in df.columns:
-        df["rule-action"] = df["rule-action"].astype(str).str.upper().replace({"": "START", "nan": "START"})
+    # normalizza country/currency se presenti (non li imponiamo!)
     if "country-code" in df.columns:
         df["country-code"] = df["country-code"].astype(str).str.upper()
     if "currency-code" in df.columns:
         df["currency-code"] = df["currency-code"].astype(str).str.upper()
 
-    # filtra righe vuote sku
+    # righe senza SKU → fuori
     if "SKU" in df.columns:
         df = df[df["SKU"].astype(str).str.strip() != ""]
+
     return df.reset_index(drop=True)
 
 def normalize_sku(series: pd.Series, parse_suffix: bool) -> pd.Series:
     series = series.astype(str).str.strip()
     return series.str.rsplit("-", n=1).str[0] if parse_suffix else series
 
-def ensure_country_currency(df: pd.DataFrame, default_country: str = "IT"):
-    """Mantiene i 'country-code' esistenti; se mancanti li riempie con default.
-    Compila/normalizza 'currency-code' coerentemente col paese quando assente o vuota.
-    """
+def ensure_country_currency(df: pd.DataFrame, default_country: str = "IT") -> pd.DataFrame:
+    """Mantieni i country-code presenti; **riempi solo i vuoti**; non sovrascrivere mai."""
     if "country-code" not in df.columns:
         df["country-code"] = default_country
-    df["country-code"] = df["country-code"].astype(str).str.upper().replace({"UK":"GB"}).fillna(default_country)
-
+    df["country-code"] = df["country-code"].astype(str).str.upper()
+    # UK è accettato dai file Amazon: non forziamo in GB
     if "currency-code" not in df.columns:
-        df["currency-code"] = df["country-code"].map(CURRENCY_BY_COUNTRY).fillna("EUR")
+        df["currency-code"] = df["country-code"].map(CURRENCY_BY_COUNTRY)
     else:
         df["currency-code"] = df["currency-code"].astype(str).str.upper()
-        mask_empty = df["currency-code"].isin(["", "NAN", "NONE"])
-        df.loc[mask_empty, "currency-code"] = df.loc[mask_empty, "country-code"].map(CURRENCY_BY_COUNTRY).fillna("EUR")
+        mask_empty = df["currency-code"].isin(["", "NAN", "NONE"]) | df["currency-code"].isna()
+        df.loc[mask_empty, "currency-code"] = df.loc[mask_empty, "country-code"].map(CURRENCY_BY_COUNTRY)
     return df
 
 def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, parse_suffix: bool):
@@ -181,9 +179,10 @@ def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, 
     purchase_df["_SKU_KEY_"]  = normalize_sku(purchase_df[price_key], parse_suffix)
 
     candidate_price_cols = [c for c in purchase_df.columns
-                            if ("prezzo" in c.lower() and "medio" in c.lower()) or c.lower().strip() in {"prezzo","prezzo medio","prezzo medio (€)"}]
+                            if ("prezzo" in c.lower() and "medio" in c.lower())
+                            or c.lower().strip() in {"prezzo","prezzo medio","prezzo medio (€)"}]
     if not candidate_price_cols:
-        st.error("Colonna del prezzo d'acquisto non trovata (es. 'Prezzo medio', 'Prezzo').")
+        st.error("Colonna del prezzo d'acquisto non trovata (es. 'Prezzo medio').")
         st.stop()
     price_col = candidate_price_cols[0]
 
@@ -205,8 +204,7 @@ def get_merged_inventory(inventory_df: pd.DataFrame, purchase_df: pd.DataFrame, 
 def calc_min_price(row: pd.Series, referral_pct: float, closing_fee: float, dst_pct: float,
                    ship_cost: float, vat_pct: float, margin_pct: float):
     """
-    Prezzo minimo (IVA inclusa) che raggiunge il margine desiderato – formula legacy
-    che ti dava parità con il Revenue Calculator:
+    Prezzo minimo (IVA inclusa) che raggiunge il margine desiderato – formula legacy:
 
         P = k*(CoG + S + (1+d)*C) / ( 1 - k*((1+d)*r + m) )
 
@@ -242,6 +240,7 @@ def build_flatfile(df: pd.DataFrame, sku_col: str) -> pd.DataFrame:
         "sku": df.get(sku_col, df.get("SKU")),
         "minimum-seller-allowed-price": df.get("minimum-seller-allowed-price", df.get("Prezzo minimo suggerito (€)")),
         "maximum-seller-allowed-price": df.get("maximum-seller-allowed-price", ""),
+        # ⬇️ Manteniamo i country/currency presenti (riempiti a monte se mancanti)
         "country-code": df.get("country-code"),
         "currency-code": df.get("currency-code"),
         "rule-name": df.get("rule-name", "AUTO"),
@@ -274,7 +273,8 @@ def highlight_below(row):
 # --------------------------- Caricamento ---------------------------
 inventory_df = load_excel(inv_file)
 purchase_df  = load_excel(price_file)
-rename_map = {"sku": "SKU", "seller-sku": "SKU", "current-selling-price": "Prezzo"}
+
+rename_map = {"sku":"SKU","seller-sku":"SKU","current-selling-price":"Prezzo"}
 if inventory_df is not None: inventory_df = inventory_df.rename(columns=rename_map)
 if purchase_df  is not None: purchase_df  = purchase_df.rename(columns=rename_map)
 
@@ -289,8 +289,8 @@ if export_file is not None and purchase_df is not None and inventory_df is None:
         st.error("Il flat-file export non contiene 'SKU'."); st.stop()
 
     export_df["_SKU_KEY_"] = normalize_sku(export_df["SKU"], parse_suffix)
-    # non forzare il paese: preserva quelli presenti nell'export
-    export_df = ensure_country_currency(export_df, default_country="IT")
+    # Mantieni country e currency dell'export; compila SOLO i mancanti
+    export_df = ensure_country_currency(export_df)
 
     price_key_candidates = [c for c in purchase_df.columns if c.upper() in {"CODICE","SKU","CODICE(ASIN)"}]
     if not price_key_candidates:
@@ -329,12 +329,10 @@ if export_file is not None and purchase_df is not None and inventory_df is None:
         ship_cost=shipping_cost, vat_pct=vat_pct, margin_pct=margin_pct,
     )
 
-    # ---- Rule-name uniforme (senza suffisso) ----
-    st.markdown("### Rule name")
+    # Rule-name uniforme (nessun suffisso) + preserva country/currency
     rule_name_value = st.text_input("Rule name da applicare a tutti gli SKU", value="AUTO", key="exponly_rule_value")
     merged_export["rule-name"]   = rule_name_value
     merged_export["rule-action"] = "START"
-    # mantieni i country-code presenti; fill valute coerenti
     merged_export = ensure_country_currency(merged_export)
 
     only_missing_min = st.checkbox("Mostra solo righe senza 'minimum-seller-allowed-price'", value=True, key="exponly_missmin")
@@ -351,8 +349,8 @@ if export_file is not None and purchase_df is not None and inventory_df is None:
 
     ff_out = view.dropna(subset=["SKU", "minimum-seller-allowed-price"])
     st.dataframe(
-        ff_out[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price",
-                "Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
+        ff_out[["SKU","country-code","currency-code","rule-name","rule-action",
+                "minimum-seller-allowed-price","Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
         use_container_width=True, hide_index=True
     )
     st.download_button(
@@ -374,7 +372,7 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
         st.error("Il flat-file export non contiene 'SKU'."); st.stop()
 
     export_df["_SKU_KEY_"] = normalize_sku(export_df["SKU"], parse_suffix)
-    export_df = ensure_country_currency(export_df, default_country="IT")
+    export_df = ensure_country_currency(export_df)
 
     inv_key_candidates = [c for c in inventory_df.columns if c.upper() in {"SKU","CODICE(ASIN)","CODICE","ASIN"}]
     if not inv_key_candidates:
@@ -382,6 +380,7 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
     inv_key = st.selectbox("Colonna SKU nell'inventario", inv_key_candidates, index=0, key="expinv_invkey")
     inventory_df["_SKU_KEY_"] = normalize_sku(inventory_df[inv_key], parse_suffix)
 
+    # colonna costo dall'inventario
     priority = ["Prezzo medio acquisto (€)","Prezzo medio acquisto","Prezzo acquisto","Prezzo d'acquisto",
                 "Costo acquisto","Costo","Costo unitario","Costo medio","Prezzo medio"]
     name_hits = [c for c in inventory_df.columns if any(p in c.lower() for p in ["acquisto","costo","cost","purchase","prezzo"])]
@@ -419,8 +418,7 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
         ship_cost=shipping_cost, vat_pct=vat_pct, margin_pct=margin_pct,
     )
 
-    # ---- Rule-name uniforme (senza suffisso) ----
-    st.markdown("### Rule name")
+    # Rule-name uniforme + preserva country/currency
     rule_name_value = st.text_input("Rule name da applicare a tutti gli SKU", value="AUTO", key="expinv_rule_value")
     merged_export["rule-name"]   = rule_name_value
     merged_export["rule-action"] = "START"
@@ -440,8 +438,8 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
 
     ff_out = view.dropna(subset=["SKU", "minimum-seller-allowed-price"])
     st.dataframe(
-        ff_out[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price",
-                "Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
+        ff_out[["SKU","country-code","currency-code","rule-name","rule-action",
+                "minimum-seller-allowed-price","Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
         use_container_width=True, hide_index=True
     )
     st.download_button(
@@ -519,20 +517,22 @@ if export_file is not None:
     if export_df2 is not None and "SKU" in export_df2.columns:
         export_df2["_SKU_KEY_"] = normalize_sku(export_df2["SKU"], parse_suffix)
         export_df2 = ensure_country_currency(export_df2)
-        ff_df = export_df2.merge(edited_df[["_SKU_KEY_", "Prezzo medio acquisto (€)"]], on="_SKU_KEY_", how="left")
 
+        ff_df = export_df2.merge(
+            edited_df[["_SKU_KEY_", "Prezzo medio acquisto (€)"]],
+            on="_SKU_KEY_", how="left"
+        )
         ff_df["Prezzo minimo suggerito (€)"] = ff_df.apply(
             calc_min_price, axis=1,
             referral_pct=referral_fee_pct, closing_fee=closing_fee, dst_pct=DST_PCT,
             ship_cost=shipping_cost, vat_pct=vat_pct, margin_pct=margin_pct,
         )
 
-        # Rule-name uniforme
-        st.markdown("### Rule name (export)")
+        # Rule-name identico, senza suffissi
         rule_name_value_all = st.text_input("Rule name da applicare a tutti gli SKU (export)", value="AUTO", key="expfull_rule_value")
         ff_df["rule-name"]   = rule_name_value_all
         ff_df["rule-action"] = "START"
-        ff_df = ensure_country_currency(ff_df)
+        ff_df = ensure_country_currency(ff_df)  # riempi SOLO i vuoti
 
         only_missing_min2 = st.checkbox("Mostra solo senza 'minimum-seller-allowed-price' (export)", value=True, key="exp_full_missmin")
         overwrite_min2    = st.checkbox("Sovrascrivi 'minimum-seller-allowed-price' (export)", value=False, key="exp_full_overwrite")
@@ -548,8 +548,8 @@ if export_file is not None:
 
         ff_out2 = view2.dropna(subset=["SKU", "minimum-seller-allowed-price"])
         st.dataframe(
-            ff_out2[["SKU","country-code","currency-code","rule-name","rule-action","minimum-seller-allowed-price",
-                     "Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
+            ff_out2[["SKU","country-code","currency-code","rule-name","rule-action",
+                     "minimum-seller-allowed-price","Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"]].head(150),
             use_container_width=True, hide_index=True
         )
         st.download_button(
@@ -559,7 +559,7 @@ if export_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-# Download Excel unificato + Flat-file (min price)
+# Download Excel unificato + Flat-file (min price) dal dataset principale
 out = io.BytesIO()
 with pd.ExcelWriter(out, engine="openpyxl") as writer:
     edited_df.drop(columns=["_SKU_KEY_"], errors="ignore").to_excel(writer, index=False, sheet_name="inventario_match")
@@ -571,7 +571,7 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
 
-# NB: questo flat-file "MinOnly" usa country/currency se presenti in edited_df; altrimenti rimangono NaN (il template li accetta)
+# Flat-file "MinOnly" (se stai lavorando senza export, riempiamo i vuoti con IT/EUR ma NON sovrascriviamo nulla di già presente)
 minonly_df = ensure_country_currency(edited_df.copy())
 st.download_button(
     "💾 Scarica Flat-File (min price)",

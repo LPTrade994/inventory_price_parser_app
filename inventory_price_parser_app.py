@@ -653,6 +653,137 @@ if export_file is not None and inventory_df is not None and purchase_df is None:
 
     st.stop()  # Evita di proseguire nel flusso completo (che richiede anche il file acquisti)
 
+# -------------------------------------------------------------------
+# SOLO EXPORT + ACQUISTI: flat-file Amazon + file acquisti (senza inventario)
+# -------------------------------------------------------------------
+if export_file is not None and purchase_df is not None and inventory_df is None:
+    st.subheader("Non Automated SKUs – da export Amazon (solo export + acquisti)")
+
+    # Leggo l'export con header dinamico
+    try:
+        export_df = load_amazon_export(export_file)
+    except Exception as e:
+        st.error(f"Errore nel parsing del flat-file export: {e}")
+        st.stop()
+
+    if "SKU" not in export_df.columns:
+        st.error("Il flat-file export non contiene 'SKU'.")
+        st.stop()
+
+    export_df["_SKU_KEY_"] = normalize_sku(export_df["SKU"], parse_option)
+
+    # Individuo chiave SKU nel file acquisti
+    price_key_candidates = [c for c in purchase_df.columns if c.upper() in {"CODICE","SKU","CODICE(ASIN)"}]
+    if not price_key_candidates:
+        st.error("Nel file acquisti manca la colonna SKU/CODICE/CODICE(ASIN).")
+        st.stop()
+    price_key_exp = st.selectbox("Colonna SKU nel file acquisti", price_key_candidates, index=0, key="exponly_pricekey")
+    purchase_df["_SKU_KEY_"] = normalize_sku(purchase_df[price_key_exp], parse_option)
+
+    # Trovo la colonna prezzo d'acquisto
+    candidate_price_cols = [
+        c for c in purchase_df.columns
+        if ("prezzo" in c.lower() and "medio" in c.lower())
+        or c.lower().strip() in {"prezzo","prezzo medio","prezzo medio (€)"}
+    ]
+    if not candidate_price_cols:
+        st.error("Colonna prezzo d'acquisto non trovata (es. 'Prezzo medio').")
+        st.stop()
+    price_col_exp = candidate_price_cols[0] if len(candidate_price_cols) == 1 else st.selectbox("Colonna prezzo d'acquisto", candidate_price_cols, index=0, key="exponly_pricecol")
+
+    # Categoria opzionale
+    cat_cols_exp = [c for c in purchase_df.columns if c.lower().strip() == "categoria"]
+
+    cols = ["_SKU_KEY_", price_col_exp] + (["Categoria"] if cat_cols_exp else [])
+    if cat_cols_exp:
+        purchase_df = purchase_df.rename(columns={cat_cols_exp[0]: "Categoria"})
+
+    # Merge export ⟷ acquisti
+    merged_export = export_df.merge(
+        purchase_df[cols].rename(columns={price_col_exp: "Prezzo medio acquisto (€)"}),
+        on="_SKU_KEY_", how="left", suffixes=("", "_acq")
+    )
+
+    # Parametri (indipendenti dall'inventario)
+    st.markdown("### Parametri costi e margini (solo export + acquisti)")
+    defaults_only = CATEGORY_MAP.get("_default", {"referral": 15.0, "closing": 0.0})
+    referral_fee_pct_exp = st.number_input("% Commissione Amazon", value=defaults_only["referral"], min_value=0.0, key="exponly_ref")
+    shipping_cost_exp     = st.number_input("Costo spedizione €", value=0.0, min_value=0.0, key="exponly_ship")
+    vat_pct_exp           = st.number_input("IVA %", value=22.0, min_value=0.0, step=0.1, key="exponly_vat")
+    margin_pct_exp        = st.number_input("Margine desiderato %", value=20.0, min_value=0.0, key="exponly_margin")
+    closing_fee_exp       = defaults_only.get("closing", 0.0)
+
+    # Calcolo minimo
+    merged_export["Prezzo medio acquisto (€)"] = pd.to_numeric(merged_export["Prezzo medio acquisto (€)"], errors="coerce")
+    merged_export["Prezzo minimo suggerito (€)"] = merged_export.apply(
+        calc_min_price,
+        axis=1,
+        referral_pct=referral_fee_pct_exp,
+        closing_fee=closing_fee_exp,
+        dst_pct=DST_PCT,
+        ship_cost=shipping_cost_exp,
+        vat_pct=vat_pct_exp,
+        margin_pct=margin_pct_exp,
+    )
+
+    # Opzioni flat-file
+    only_missing_min_exp = st.checkbox("Mostra solo righe senza 'minimum-seller-allowed-price' nel file", value=True, key="exponly_missmin")
+    overwrite_min_exp    = st.checkbox("Sovrascrivi 'minimum-seller-allowed-price' se già presente", value=False, key="exponly_overwrite")
+
+    default_rule_base_exp = st.text_input("Rule name di default", value="AUTO", key="exponly_rulename")
+    today_str_exp = pd.Timestamp.today().strftime("%Y%m%d")
+
+    if "rule-name" not in merged_export.columns:
+        merged_export["rule-name"] = ""
+    if "country-code" not in merged_export.columns:
+        merged_export["country-code"] = "IT"
+    if "currency-code" not in merged_export.columns:
+        merged_export["currency-code"] = "EUR"
+
+    merged_export["rule-action"] = merged_export.get("rule-action", "START")
+    merged_export["rule-action"] = merged_export["rule-action"].astype(str).str.upper().replace({"": "START"})
+
+    def _mk_rule_name_exp(row):
+        rn = str(row.get("rule-name") or "").strip()
+        if rn:
+            return rn
+        cc = str(row.get("country-code") or "IT").upper()
+        return f"{default_rule_base_exp}-{cc}-{today_str_exp}"
+
+    merged_export["rule-name"] = merged_export.apply(_mk_rule_name_exp, axis=1)
+
+    # Filtri e riempimento minimo
+    if "minimum-seller-allowed-price" in merged_export.columns and only_missing_min_exp:
+        view_exp = merged_export[merged_export["minimum-seller-allowed-price"].isna()].copy()
+    else:
+        view_exp = merged_export.copy()
+
+    if overwrite_min_exp or "minimum-seller-allowed-price" not in view_exp.columns:
+        view_exp["minimum-seller-allowed-price"] = view_exp["Prezzo minimo suggerito (€)"]
+    else:
+        view_exp["minimum-seller-allowed-price"] = view_exp["minimum-seller-allowed-price"].where(
+            view_exp["minimum-seller-allowed-price"].notna(), view_exp["Prezzo minimo suggerito (€)"]
+        )
+
+    ff_out_exp = view_exp.dropna(subset=["SKU", "Prezzo medio acquisto (€)", "minimum-seller-allowed-price"])  # richiedo costo valido
+
+    st.dataframe(
+        ff_out_exp[[
+            "SKU","country-code","currency-code","rule-name","rule-action",
+            "minimum-seller-allowed-price","Prezzo medio acquisto (€)","Prezzo minimo suggerito (€)"
+        ]].head(100),
+        use_container_width=True, hide_index=True
+    )
+
+    st.download_button(
+        "💾 Scarica Flat-File (compilato da export)",
+        data=make_flatfile_bytes(build_flatfile(ff_out_exp, "SKU")),
+        file_name="AutomatePricing_FromExport.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    st.stop()
+
 # ---------------------------------------------------------
 # Preparazione e merge
 # ---------------------------------------------------------
